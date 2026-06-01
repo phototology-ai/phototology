@@ -1,0 +1,38 @@
+{
+  "name": "phototology",
+  "version": "1.0.0",
+  "description": "Phototology — persistent memory for visual intelligence. The working packages are @phototology/sdk (TypeScript SDK) and @phototology/mcp (MCP server). See phototology.com.",
+  "license": "MIT",
+  "homepage": "https://phototology.com",
+  "bugs": {
+    "url": "https://github.com/phototology-ai/phototology/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/phototology-ai/phototology.git",
+    "directory": "packages/phototology"
+  },
+  "keywords": [
+    "phototology",
+    "ai",
+    "vision",
+    "photo-intelligence",
+    "image-analysis",
+    "mcp",
+    "model-context-protocol",
+    "sdk",
+    "computer-vision",
+    "image-recognition",
+    "claude-code",
+    "cursor",
+    "agentic-ai"
+  ],
+  "main": "index.js",
+  "files": [
+    "index.js",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

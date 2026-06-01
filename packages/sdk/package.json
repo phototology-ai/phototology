@@ -1,0 +1,61 @@
+{
+  "name": "@phototology/sdk",
+  "version": "1.1.3",
+  "description": "TypeScript SDK for the Phototology photo intelligence registry. Composable analysis lenses return structured JSON. Analyze once. Remember forever. Free lookups.",
+  "license": "MIT",
+  "homepage": "https://phototology.com",
+  "bugs": {
+    "url": "https://github.com/phototology-ai/phototology/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/phototology-ai/phototology.git",
+    "directory": "packages/sdk"
+  },
+  "keywords": [
+    "phototology",
+    "vision",
+    "ai",
+    "photo-intelligence",
+    "image-analysis",
+    "mcp",
+    "sdk",
+    "registry",
+    "photo-registry",
+    "perceptual-hash",
+    "visual-memory",
+    "cache-hits",
+    "delta-billing",
+    "analyze-once",
+    "exif-metadata"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": "bin/init.js",
+  "files": [
+    "dist",
+    "bin"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "jest --passWithNoTests",
+    "prepublishOnly": "node ../../scripts/sync-readme-lens-table.mjs README.md && pnpm build && node ../../scripts/check-publish-drift.mjs"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^22.0.0",
+    "jest": "^30.0.0",
+    "ts-jest": "^29.4.9",
+    "typescript": "^5.9.0"
+  }
+}
