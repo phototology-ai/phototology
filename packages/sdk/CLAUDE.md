@@ -1,5 +1,5 @@
 # @phototology/sdk Development Protocol
-> **Version:** 1.0.2 | **Architecture:** Typed fetch wrapper, exponential backoff, CommonJS | **Updated:** 2026-05-17
+> **Version:** 1.2.0 | **Architecture:** Typed fetch wrapper, exponential backoff, CommonJS | **Updated:** 2026-06-01
 
 ## What This Is
 
@@ -35,7 +35,7 @@ Single class (`PhototologyClient`) wraps five API endpoints:
 - `client.analyze(request)` — POST `/v1/analyze` (or `/v2/analyze` when `request.extract` is set), returns discriminated union `AnalyzeResponse`
 - `client.modules()` — GET `/v1/modules`, returns modules/presets discovery
 - `client.lookup(request)` — POST `/v2/lookup` (or GET fast-path with `sha256`/`pHash`), returns the registry projection. Free.
-- `client.usage()` — GET `/v1/usage`, returns the dual-pool credit balance (`community`, `purchased`, `reserved`, `resetsInDays`). Free. Added in 1.0.2 (2026-05-17); strictly additive — no existing method signatures change.
+- `client.usage()` — GET `/v1/usage`, returns the credit balance (`total` spendable + back-compat `community`, `purchased`, `reserved`, `resetsInDays`). Free. Added in 1.1.0 (2026-05-17); strictly additive — no existing method signatures change.
 - `client.enrich(request)` — POST `/v2/enrich`, writes cached lens output into the photo's EXIF/IPTC/XMP metadata and returns the enriched bytes. Requires a prior `analyze()` on the same photo (else throws `ValidationError` with `PHOTO_NOT_IN_REGISTRY`). Costs 5 credits per call.
 
 Retry logic lives in `retry.ts` (`fetchWithRetry`), called by the private `request()` method. The client tracks rate limit state in-memory via `x-ratelimit-remaining`/`x-ratelimit-reset` headers and pre-emptively backs off before the next request.

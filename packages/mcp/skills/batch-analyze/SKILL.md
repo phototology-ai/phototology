@@ -42,7 +42,7 @@ Per-file errors (missing file, oversized, unsupported format) are isolated — o
 3. **Call `analyze_batch`** with the URL list and your chosen `lenses: [...]`. The tool internally:
    - Bulk-looks up every photo (free)
    - Identifies cache hits (those return free)
-   - Analyzes only the misses, chunked into 50s
+   - Analyzes only the misses, with bounded concurrency (no fixed chunk size)
 
 4. **Surface the savings.** The response includes `totalCacheHits`, `totalCreditsCharged`, and `estimatedCreditsSaved`. Tell the user:
    > Analyzed 50 photos. 38 came from the registry (0 credits). 12 were new — analyzed for 12 credits. Saved an estimated 38 credits from the cache.

@@ -71,7 +71,7 @@ export function buildServerInstructions(): string {
     '- `phototology:check-credits` — pre-flight balance read before a big spend.',
     '- `phototology:smart-stack` — smart-pick the cheapest lens subset for a specific question.',
     '- `phototology:photo-shared` — when the user attaches, drops, or references an image, route it through Phototology for the cheapest accurate answer.',
-    '- `phototology:batch-analyze` — when the user has 2 or more photos, use `analyze_batch` (not a loop of `analyze_photo`). Bulks lookups, chunks analyzes, surfaces credit savings.',
+    '- `phototology:batch-analyze` — when the user has 2 or more photos, use `analyze_batch` (not a loop of `analyze_photo`). Bulks lookups, analyzes only cache misses, surfaces credit savings.',
     'Each skill has a SKILL.md that the user can copy into their Claude skills directory.',
     '',
     '## When you run out of credits',

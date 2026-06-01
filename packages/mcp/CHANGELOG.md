@@ -2,6 +2,36 @@
 
 All notable changes to `@phototology/mcp` are tracked here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning follows [SemVer](https://semver.org/).
 
+## [1.2.0] — 2026-06-01
+
+First coordinated 1.2.0 cut with `@phototology/sdk`. Adds a seventh tool (`enrich_photo`), local-file and base64 image input on every image-accepting tool, and per-tool usage telemetry. Existing `imageUrl` callers see no behavior change.
+
+### Added
+
+- **`enrich_photo` tool (the seventh tool).** Writes a photo's already-cached lens output into its EXIF/IPTC/XMP metadata so the intelligence travels with the file. Accepts `imageUrl`, `imageBase64`, or `imagePath`, plus an optional `outputPath` to save the enriched bytes to local disk. Costs 5 credits per call and requires a prior analyze on the same photo. Wraps the SDK's new `client.enrich()`.
+- **Local-file and base64 input on `analyze_photo`, `analyze_batch`, and `lookup_photo`.** New input modes: `imagePath` (absolute or `~/`-prefixed) and `imageBase64`; `analyze_batch` also adds `imagePaths` (glob patterns via fast-glob) and `imagesBase64`. A new shared helper, `src/lib/local-image.ts`, is the single source of truth for path resolution, reads, sha256 hashing, base64 validation, and glob expansion. Caps: 10MB per image, 200 inputs per call, 200-file glob. Relative paths and symlinks are rejected; formats (JPEG, PNG, GIF, WebP, HEIC) are magic-byte sniffed, not extension-trusted. Schema-additive and fully backward-compatible.
+- **`lookup_photo` runs a transparent sha256 to pHash cascade** on local or byte input, short-circuiting on any sha256 hit. Both lookup calls stay free.
+- **Per-tool usage telemetry.** One `mcp_tool_called` PostHog event per tool invocation (fire-and-forget, PII-free: ok, duration, error code, plus analyze enrichment counts like lens count, credits charged, cache hit, and batch photo/cache-hit counts). It complements the initialize-time discovery beacon shipped in 1.1.3. Opt out with `PHOTOTOLOGY_MCP_NO_TELEMETRY=1` (same flag as the discovery beacon).
+- Server instructions and the companion skills (`photo-shared`, `batch-analyze`, `lookup-first`) updated for local-file input and the `enrich_photo` tool.
+
+### Changed
+
+- **`list_lenses` surfaces per-lens `billable`, `defaultColumns`, and `internal`** flags, mirroring the API's `/v1/modules`.
+- **`analyze_batch` per-photo error isolation extended to local inputs.** One bad file (missing, oversized, or malformed) surfaces as a `source: 'error'` outcome instead of failing the whole batch.
+- **Server instructions and the test-vs-live block updated for `livemode`.** Sandbox `pt_test_` keys report `livemode: false`; live `pt_live_` keys report `livemode: true`. Branch on `livemode`, not on `meta.provider`.
+- **`get_credits` and the 402 copy lead with `total`** (the spendable balance). The community/purchased split is described as back-compat plumbing, not two balances the user manages.
+
+### Fixed
+
+- **README `analyze_batch` description corrected.** Removed the stale "chunks analyzes into batches of 50" claim; the tool is lookup-first (per URL, free) then analyzes only cache misses with bounded concurrency.
+- **Tool-count copy corrected** across the post-install setup message (six -> seven tools, now including `enrich_photo`) and the README ("6 tools registered" -> "7 tools registered").
+- **GitHub link repointed** from the archived standalone `phototology-mcp` repo to the consolidated `phototology` monorepo at `packages/mcp`.
+- Telemetry enrichment fields corrected: `enrich_photo` reads `meta.creditsCharged`; analyze normalizes `meta.cacheHit` to an explicit boolean.
+
+### Dependencies
+
+- Added `fast-glob ^3.3.2` for local-image glob expansion (no native bindings).
+
 ## [1.1.3] — 2026-05-21
 
 ### Added

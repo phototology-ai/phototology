@@ -5,7 +5,7 @@
 This unscoped `phototology` package is a placeholder that reserves the bare-name slot on npm for the Phototology project. **It exports nothing.** Install one of the scoped packages instead:
 
 - **[`@phototology/sdk`](https://www.npmjs.com/package/@phototology/sdk)** — TypeScript client SDK for the Phototology AI vision API
-- **[`@phototology/mcp`](https://www.npmjs.com/package/@phototology/mcp)** — Model Context Protocol server for Claude Code, Cursor, VS Code, and other AI coding assistants
+- **[`@phototology/mcp`](https://www.npmjs.com/package/@phototology/mcp)** — Model Context Protocol server for Claude Code, Claude Desktop, Cursor, VS Code Copilot, Windsurf, Gemini CLI, Codex CLI, and other AI coding assistants
 
 See [phototology.com](https://phototology.com) for documentation, the registry, and your API keys.
 

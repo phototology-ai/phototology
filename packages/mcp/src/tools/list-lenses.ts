@@ -14,7 +14,7 @@ import { renderToolError } from './errors';
 interface SdkLensColumn {
   label: string;
   jsonPath: string;
-  format?: 'string' | 'number' | 'date' | 'percentage' | 'tags' | 'hex';
+  format?: 'string' | 'number' | 'date' | 'percentage' | 'tags' | 'hex' | 'count';
 }
 interface SdkModule {
   name: string;

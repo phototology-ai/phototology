@@ -32,7 +32,7 @@ The interactive wizard asks for your API key and writes the config for whichever
 | Tool | What it does | Cost |
 |------|--------------|------|
 | `analyze_photo` | Run AI vision against ONE image and return structured facts per lens. Accepts `imageUrl`, `imageBase64`, or `imagePath`. | 1 credit per lens. Re-running cached lenses on the same photo: 0. |
-| `analyze_batch` | Analyze 1 to 200 photos in a single call. Internally lookup-first, then chunks analyzes into batches of 50. For thousands, loop in slices. Accepts `imageUrls`, `imagesBase64`, or `imagePaths` (with glob support). | 1 credit per lens per non-cached photo. Cache hits free. |
+| `analyze_batch` | Analyze 1 to 200 photos in a single call. Internally lookup-first per URL (20 in flight), then analyzes cache-miss photos with bounded concurrency (25 in flight). For thousands, loop in slices of 200. Accepts `imageUrls`, `imagesBase64`, or `imagePaths` (with glob support). | 1 credit per lens per non-cached photo. Cache hits free. |
 | `lookup_photo` | Check if a single photo has already been analyzed; return all cached lens results. Accepts `sha256`, `pHash`, `imageUrl`, `imageBase64`, or `imagePath` (cascade). | Free. |
 | `enrich_photo` | Write cached lens output into a photo's EXIF/IPTC/XMP metadata so the structured intelligence travels with the file. Accepts `imageUrl`, `imageBase64`, or `imagePath` plus an optional `outputPath` to save the enriched bytes back to disk. | 5 credits per call. |
 | `list_lenses` | Enumerate available lenses and stacks with descriptions and output fields. | Free. |
@@ -42,7 +42,7 @@ The interactive wizard asks for your API key and writes the config for whichever
 ## Pricing
 
 - **1 credit = $0.01 = one lens run on one photo.** Stack five lenses on a photo = 5 credits = $0.05.
-- **New users start with 5,000 free credits.** 1,000 land when you verify your email; the other 4,000 land when you add a card-on-file. Stripe holds the card; Phototology never charges it without a separate purchase.
+- **5,000 free credits when you sign up:** 1,000 for verifying your email, 4,000 for adding a card-on-file. The card is never charged automatically. One-time, not recurring.
 - **Lookups, lens discovery, balance reads, and purchase links are always free.**
 - **Cache hits cost zero.** Re-running the same lens on the same photo returns the cached output for free. The registry keeps re-runs free across sessions.
 - **Bespoke schema extraction = 5 credits per image** (plus 1 per additional stacked lens).
@@ -186,7 +186,7 @@ args = ["-y", "@phototology/mcp"]
 PHOTOTOLOGY_API_KEY = "pt_live_..."
 ```
 
-After editing the config, restart your editor. You should see 6 tools registered under `phototology`.
+After editing the config, restart your editor. You should see 7 tools registered under `phototology`.
 
 ## First 5 minutes
 
@@ -206,7 +206,7 @@ Five optional skills ship inside the package under `node_modules/@phototology/mc
 - **`phototology:check-credits`**: pre-flight balance read before a big batch.
 - **`phototology:smart-stack`**: smart-pick the cheapest lens subset for a specific question.
 - **`phototology:photo-shared`**: activate whenever the user shares, attaches, drops, or references an image. Routes the photo through Phototology for the cheapest accurate answer.
-- **`phototology:batch-analyze`**: any job with 2 or more photos. Calls `analyze_batch` instead of looping `analyze_photo`. Bulks lookups, chunks analyzes, surfaces credit savings.
+- **`phototology:batch-analyze`**: any job with 2 or more photos. Calls `analyze_batch` instead of looping `analyze_photo`. Looks up first, analyzes only the misses, surfaces credit savings.
 
 When installed, the agent invokes them when context matches.
 
@@ -297,7 +297,7 @@ Stripe checkout requires a browser. The MCP cannot complete payment; the user mu
 - [TypeScript SDK](https://www.npmjs.com/package/@phototology/sdk): `npm install @phototology/sdk`
 - [API Documentation](https://api.phototology.com/v1/docs)
 - [OpenAPI Spec](https://api.phototology.com/v1/openapi.json)
-- [GitHub](https://github.com/phototology-ai/phototology-mcp)
+- [GitHub](https://github.com/phototology-ai/phototology/tree/main/packages/mcp)
 
 ## License
 

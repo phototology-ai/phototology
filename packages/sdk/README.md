@@ -61,7 +61,7 @@ npx @phototology/sdk
 
 This creates a `.env` file and a working `analyze-example.ts` script. Set `PHOTOTOLOGY_API_KEY` beforehand or paste it when prompted.
 
-Keys starting with `pt_test_` use the test sandbox (instant responses, zero cost, deterministic fixtures). Detect a sandbox response at runtime with `result.livemode === false` (live runs are `true`) — the fixture payload is the same for every image, so never treat it as facts about a real photo.
+A `pt_test_` key runs the free sandbox: analyze returns deterministic golden-fixture data with `livemode: false`, `usage.creditsCharged: 0`, and `meta.provider: "test-sandbox"`, the same payload regardless of the image. Use it to wire up an integration, never as facts about a real photo. A `pt_live_` key returns real model output with `livemode: true`. Branch on `livemode`, not on `meta.provider`.
 
 ## API Reference
 
@@ -104,7 +104,6 @@ result.livemode;                // true on pt_live_, false on the pt_test_ sandb
 result.outputSchema;            // "photo" | "vehicle"
 result.output;                  // Structured analysis data
 result.usage.totalTokens;       // Token count
-result.usage.estimatedCostUsd;  // Cost estimate
 result.usage.creditsCharged;    // Credits billed on this call (0 on a full registry cache hit)
 result.embedding;               // number[] (if requested)
 result.fingerprint;             // { pHash, dHash, sha256 } (if requested)
@@ -137,7 +136,8 @@ const byImage = await client.lookup({
 const record = byHash.results['e3b0c442...'];
 record.matchType;             // 'exact' | 'fuzzy' | 'none'
 record.hammingDistance;       // number (fuzzy matches only)
-record.photo;                 // PhotoRecord — omitted on 'none'
+record.photo;                 // PhotoRecord, omitted on 'none'
+record.computedHashes;        // { sha256, pHash, dHash } when you submitted image bytes (POST path); absent on the GET hash fast path
 
 if (record.photo) {
   record.photo.sha256;
@@ -194,6 +194,25 @@ usage.purchased.balance;             // Pack-bought credits (part of total)
 ```
 
 `total` added 2026-05-29 (credit-pools relabel). Strictly additive: the dual-pool fields remain, no method signatures change.
+
+### `client.enrich(request)`
+
+Write a photo's cached lens output into its EXIF/IPTC/XMP metadata blocks and return the enriched bytes. The structured intelligence then travels with the file, readable by any downstream tool without another Phototology call.
+
+```typescript
+const result = await client.enrich({
+  imageUrl: 'https://example.com/photo.jpg', // or imageBase64
+  formats: ['exif', 'iptc', 'xmp'],          // at least one required
+});
+
+result.imageBase64;     // Enriched photo bytes, base64-encoded
+result.formatsWritten;  // Formats actually written (subset of requested)
+result.lensVersions;    // { lensName: version } embedded into the file
+result.sha256;          // SHA-256 of the ORIGINAL input bytes
+result.meta.creditsCharged; // 5
+```
+
+`enrich()` costs **5 credits per call and bills regardless of cache state.** It requires a prior `analyze()` on the same photo: if the image is not in the registry, it throws `ValidationError` with the message `PHOTO_NOT_IN_REGISTRY`. C2PA signing is deferred, so `formats: ['c2pa']` is rejected.
 
 ## Pricing
 
@@ -298,6 +317,8 @@ import type {
   PhotoRecord,
   LensIndexEntry,
   UsageResponse,
+  EnrichRequest,
+  EnrichResponse,
   PhototologyClientConfig,
 } from '@phototology/sdk';
 ```
@@ -353,7 +374,7 @@ The registry is the source of truth. Runtime callers can also hit `client.module
 - [API Documentation](https://api.phototology.com/v1/docs)
 - [OpenAPI Spec](https://api.phototology.com/v1/openapi.json)
 - [MCP Server](https://www.npmjs.com/package/@phototology/mcp) — use Phototology from AI coding assistants
-- [GitHub](https://github.com/phototology-ai/phototology-sdk)
+- [GitHub](https://github.com/phototology-ai/phototology/tree/main/packages/sdk)
 
 ## License
 

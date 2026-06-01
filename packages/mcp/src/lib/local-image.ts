@@ -67,6 +67,8 @@ export function resolvePath(input: string): string {
 
 /** Per-image raw size cap. 10MB raw → ~13.4MB base64, safely under API 50MB body limit. */
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
+/** The same 10MB per-image cap expressed in base64 characters, for the imageBase64 input mode. */
+const MAX_BASE64_CHARS = Math.ceil(MAX_FILE_BYTES / 3) * 4;
 
 /** Sniff magic bytes (first 12 bytes are enough for all supported formats). */
 function detectFormat(bytes: Buffer): 'jpeg' | 'png' | 'gif' | 'webp' | 'heic' | null {
@@ -166,6 +168,16 @@ const BASE64_REGEX = /^[A-Za-z0-9+/]+={0,2}$/;
 export function validateBase64(input: string): void {
   if (!input || input.length === 0) {
     throw new LocalImageError('INVALID_BASE64', 'Base64 input is empty.');
+  }
+  // Size check FIRST (cheap) so an oversized payload fails before we run the regex
+  // over millions of characters. Mirrors the 10MB local-file cap so every input
+  // mode shares one per-image limit and we never forward a body the API would 413.
+  if (input.length > MAX_BASE64_CHARS) {
+    const approxMb = ((input.length * 3) / 4 / 1024 / 1024).toFixed(1);
+    throw new LocalImageError(
+      'FILE_TOO_LARGE',
+      `Base64 input is ~${approxMb}MB; the per-image cap is 10MB. Resize the image, or pass imageUrl for a hostable image of any size.`,
+    );
   }
   if (!BASE64_REGEX.test(input)) {
     throw new LocalImageError('INVALID_BASE64', 'Base64 input contains invalid characters.');

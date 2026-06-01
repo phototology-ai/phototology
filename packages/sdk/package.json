@@ -1,7 +1,7 @@
 {
   "name": "@phototology/sdk",
-  "version": "1.1.3",
-  "description": "TypeScript SDK for the Phototology photo intelligence registry. Composable analysis lenses return structured JSON. Analyze once. Remember forever. Free lookups.",
+  "version": "1.2.0",
+  "description": "Persistent memory for visual intelligence. TypeScript SDK for the Phototology registry: composable analysis lenses return structured JSON. Analyze once. Remember forever. Free lookups.",
   "license": "MIT",
   "homepage": "https://phototology.com",
   "bugs": {
@@ -27,7 +27,9 @@
     "cache-hits",
     "delta-billing",
     "analyze-once",
-    "exif-metadata"
+    "exif-metadata",
+    "metadata-enrichment",
+    "photo-analysis"
   ],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -40,7 +42,8 @@
   "bin": "bin/init.js",
   "files": [
     "dist",
-    "bin"
+    "bin",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsc",

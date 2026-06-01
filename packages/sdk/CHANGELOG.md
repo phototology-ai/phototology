@@ -1,5 +1,36 @@
 # @phototology/sdk Changelog
 
+## 1.2.0 (2026-06-01)
+
+First coordinated 1.2.0 cut with `@phototology/mcp`. Adds the `enrich()` method, a top-level `livemode` discriminant, a single-number `total` credit balance, richer `/v1/modules` discovery fields, and removes the `estimatedCostUsd` margin leak (see Breaking Changes). No retry, auth, or constructor behavior changes.
+
+### Added
+
+- **`client.enrich(request): Promise<EnrichResponse>`** — POST `/v2/enrich`. Writes a photo's already-cached lens output into its EXIF/IPTC/XMP metadata and returns the enriched bytes (base64), so the intelligence travels with the file. Costs 5 credits per call and bills regardless of cache state. Requires a prior `analyze()` on the same photo, otherwise throws `ValidationError` with code `PHOTO_NOT_IN_REGISTRY`. `formats: ['c2pa']` is rejected (C2PA signing is deferred). New exported types: `EnrichRequest`, `EnrichResponse`.
+- **Top-level `livemode: boolean` on every analyze response** (`AnalyzeResponseBase`). `true` for a `pt_live_` key (real model run); `false` for a `pt_test_` sandbox key (deterministic golden-fixture data, no provider call, 0 credits). Branch on `livemode`, not on `meta.provider`. `/v2/lookup` and `/v2/enrich` intentionally omit `livemode` (no sandbox duality).
+- **`UsageResponse.total: number`** — the spendable credit balance, the single number to show. `community` and `purchased` remain for internal refund-to-origin accounting; they are not two balances the holder manages.
+- **`ErrorCredits.total: number`** on 402 `PLAN_LIMIT_EXCEEDED` credit payloads. The 402 message now leads with `total` instead of the old `(community: X, purchased: Y)` parenthetical.
+- **`LookupResult.computedHashes?: { sha256, pHash, dHash }`** — present when the lookup supplied image bytes (POST `/v2/lookup`); absent on the GET hash fast-path. Strictly additive. (Carried over from the never-published 1.1.3 intermediate; see Versioning note.)
+- **`ModuleInfo` discovery fields:** `billable: boolean`, `defaultColumns: LensColumn[]`, and `internal?: true`, plus a new exported `LensColumn` type. Drives runtime discovery and the photo-to-spreadsheet projection. Mirrors the new `/v1/modules` response shape.
+
+### Changed
+
+- **`meta.ai_generated` widened to `boolean`** (was the literal `true`, JSDoc "always true"). The `pt_test_` sandbox now emits `false` (no model ran); every real run emits `true`. The SDK type and JSDoc are updated to match the wire. (Enrich responses keep `ai_generated: true` literal, since enrich never runs in the sandbox.)
+- **`UsageResponse` JSDoc rewritten:** `total` is the number to show; the `community`/`purchased` split is internal refund accounting; `monthlyAllowance` and `resetsInDays` are flagged legacy and report 0 once the pricing v1 cutoff (2026-05-18) has bound the account.
+- **`SDK_VERSION` constant bumped to `1.2.0`** (`src/client.ts`), matching `package.json`. Was `1.1.2`, which made the `User-Agent` header report a stale version to the API and to PostHog (`user_agent_short`). The constant is now in lockstep with the package version.
+
+### Breaking Changes
+
+- **Removed `AnalyzeUsage.estimatedCostUsd`** from the TypeScript interface and from every analyze-endpoint wire response. The field was the raw server-side provider cost; the ratio between it and `creditsCharged` exposed per-lens markup math to anyone reading the response, and "server cost" was never the same thing as "what the customer paid." Migration: if you statically referenced `result.usage.estimatedCostUsd`, remove it and use `result.usage.creditsCharged` for cost-to-customer in billing UIs. Cost is still computed server-side for internal audit. The bundled quickstart scaffold (`src/init.ts`) now logs `creditsCharged` instead.
+
+### Fixed
+
+- **`LensColumn.format` now includes `'count'`** (was `'string' | 'number' | 'date' | 'percentage' | 'tags' | 'hex'`). The API emits `format: 'count'` on count columns (for example `condition.observation_count`); the union now matches the wire.
+
+> **Versioning note (1.1.3 was never published).** `package.json` briefly carried `1.1.3` for an in-tree intermediate (the `computedHashes` addition above) that was never published to npm; the last published release was `1.1.2`. Rather than publish a back-dated 1.1.3, that change is folded into this 1.2.0 release. npm goes directly `1.1.2 -> 1.2.0`.
+>
+> The `estimatedCostUsd` removal is a breaking type change; strict SemVer would call for a major bump. The field was an unintended internal-observability leak with no business meaning to TypeScript callers, and the coordinated release target is 1.2.0. The Breaking Changes callout above carries the disclosure.
+
 ## 1.1.2 (2026-05-19)
 
 ### Security

@@ -50,7 +50,7 @@ Edit `~/.claude/settings.json` and add (or replace your existing `phototology` e
 
 So it picks up the new MCP server.
 
-Verify by asking *"What MCP servers do I have?"* — `phototology-dogfood` should appear in the list, exposing 6 tools.
+Verify by asking *"What MCP servers do I have?"* — `phototology-dogfood` should appear in the list, exposing 7 tools.
 
 ### 5. Trigger the out-of-credits flow
 

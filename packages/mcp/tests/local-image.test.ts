@@ -179,6 +179,19 @@ describe('validateBase64', () => {
       expect((err as LocalImageError).code).toBe('INVALID_BASE64');
     }
   });
+
+  it('rejects oversized base64 (> 10MB) with FILE_TOO_LARGE, before the format check', () => {
+    // ~15M chars is safely over the 10MB per-image cap (~13.98M base64 chars).
+    // 'A' is a valid base64 char, so this proves the SIZE check fires first,
+    // not the regex/mod-4 checks.
+    const oversized = 'A'.repeat(15_000_000);
+    try {
+      validateBase64(oversized);
+      fail('expected throw');
+    } catch (err) {
+      expect((err as LocalImageError).code).toBe('FILE_TOO_LARGE');
+    }
+  });
 });
 
 describe('expandGlobs', () => {

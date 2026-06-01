@@ -1,7 +1,8 @@
 {
   "name": "@phototology/mcp",
-  "version": "1.1.3",
-  "description": "MCP server for the Phototology photo intelligence registry. Composable analysis lenses return structured JSON. Analyze once. Remember forever. Free lookups.",
+  "version": "1.2.0",
+  "mcpName": "@phototology/mcp",
+  "description": "Persistent memory for visual intelligence. MCP server for the Phototology registry: analyze photos with composable lenses, enrich files with EXIF/IPTC/XMP metadata, and look up cached results for free. Works with local files. Analyze once. Remember forever.",
   "license": "MIT",
   "homepage": "https://phototology.com",
   "bugs": {
@@ -27,7 +28,13 @@
     "cache-hits",
     "delta-billing",
     "analyze-once",
-    "mcp-server"
+    "mcp-server",
+    "exif",
+    "xmp",
+    "iptc",
+    "metadata",
+    "photo-metadata",
+    "local-files"
   ],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -37,7 +44,8 @@
   "files": [
     "dist",
     "bin",
-    "skills"
+    "skills",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsc",

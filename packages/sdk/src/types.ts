@@ -134,12 +134,13 @@ export interface AnalyzeMeta {
   promptHash: string;
   requestId: string;
   /**
-   * EU AI Act Art. 50 transparency flag — always `true`. The `/v1/analyze`
-   * endpoint always runs a generative model, so responses are always
-   * AI-generated.
+   * EU AI Act Art. 50 transparency flag. `true` whenever a model produced the
+   * output (fresh run, cache hit of real output, or safety screening). `false`
+   * only for the `pt_test_` sandbox, where a static golden fixture is returned
+   * and no model runs. Branch on top-level `livemode` for the live/test split.
    */
-  ai_generated: true;
-  /** Model identifier (e.g. `"gemini-2.0-flash"`, `"gpt-4o"`). */
+  ai_generated: boolean;
+  /** Model identifier (e.g. `"gemini-3.1-flash-lite"`, `"gpt-4o"`). */
   model: string;
   /** Canonical vendor of the model used. */
   vendor: AnalyzeVendor;
@@ -214,8 +215,11 @@ export interface LensColumn {
   label: string;
   /** Dotted path into `analysisResult` (e.g. "dating.estimatedYear"). */
   jsonPath: string;
-  /** Cell rendering hint. */
-  format?: 'string' | 'number' | 'date' | 'percentage' | 'tags' | 'hex';
+  /**
+   * Cell rendering hint. `'count'` resolves the `jsonPath` to an array and
+   * renders its length (mirrors the API's tabular export pipeline).
+   */
+  format?: 'string' | 'number' | 'date' | 'percentage' | 'tags' | 'hex' | 'count';
 }
 
 /** Single module (lens) in the modules discovery response. */

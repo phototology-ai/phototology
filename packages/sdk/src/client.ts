@@ -19,7 +19,7 @@ const DEFAULT_TIMEOUT = 60_000;
 // Bumped when a release needs to flip User-Agent reporting (see CHANGELOG).
 // Kept as a string literal rather than a package.json read so Node and edge
 // runtimes behave identically.
-const SDK_VERSION = '1.1.2';
+const SDK_VERSION = '1.2.0';
 const DEFAULT_USER_AGENT = `@phototology/sdk/${SDK_VERSION}`;
 
 /**

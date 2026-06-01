@@ -1,5 +1,5 @@
 # @phototology/mcp Development Protocol
-> **Version:** 1.1.0 | **Architecture:** MCP stdio server wrapping @phototology/sdk | **Updated:** 2026-05-31
+> **Version:** 1.2.0 | **Architecture:** MCP stdio server wrapping @phototology/sdk | **Updated:** 2026-06-01
 
 ## What This Is
 
