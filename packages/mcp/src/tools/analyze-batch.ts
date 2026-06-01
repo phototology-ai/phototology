@@ -11,12 +11,17 @@ const MAX_BATCH = 200;
 /**
  * Concurrent analyze calls in flight.
  *
- * Generous by design: the API rate limiter is flat at 600 RPM per user
- * (2026-05-17), so 25-concurrent analyze calls is comfortably under the
- * cap and lets the agent burn through a batch fast. Tighten only if we
- * see real rate-limit pushback at this concurrency.
+ * Bounded to the API's per-user /analyze concurrency cap (`CONCURRENCY_CAP = 5`
+ * in phototology-api/src/middleware/concurrencyLimiter.ts). The flat 600 RPM
+ * rate limit is NOT the binding constraint — the 5-in-flight cap is, and it's a
+ * separate limiter. Firing more than 5 at once returns 429
+ * CONCURRENCY_LIMIT_EXCEEDED; the SDK retries (Retry-After: 5s), but on a large
+ * batch the retry budget exhausts before in-flight vision calls (~10-20s each)
+ * free a slot, so requests fail instead of queueing. We bound client-side here
+ * so the (N+1)th photo waits for a slot rather than sending a doomed request.
+ * Keep this <= the server cap; raise both together if the cap is ever lifted.
  */
-const ANALYZE_CONCURRENCY = 25;
+const ANALYZE_CONCURRENCY = 5;
 /** Concurrent lookup calls in flight (free, cheap, generous). */
 const LOOKUP_CONCURRENCY = 20;
 
@@ -122,7 +127,7 @@ export function registerAnalyzeBatch(server: McpServer, client: PhototologyClien
         'Internal flow (registry-aware, cost-optimized):',
         '  1. Per-URL lookup for URL inputs only, with bounded concurrency (20 in flight). Free. Local-file and base64 inputs skip lookup in v1.2.0 (sha256 cascade for local files is a v1.3.0 optimization).',
         '  2. For URL images whose cached lens output covers every requested lens, return from cache (0 credits charged for that photo).',
-        '  3. For the rest, run per-photo analyze with bounded concurrency (25 in flight).',
+        '  3. For the rest, run per-photo analyze with bounded concurrency (5 in flight, matching the API per-user cap so large batches queue client-side instead of getting throttled).',
         '  4. Aggregate per-photo results.',
         '',
         'Returns `{ totalSubmitted, totalCacheHits, totalAnalyzed, totalErrors, totalCreditsCharged, estimatedCreditsSaved, results: [...] }`. Each `results[i]` echoes the original input identifier (`imageUrl` or `imagePath`), `source: "cache" | "fresh" | "error"`, the per-photo output, and creditsCharged for that one photo.',

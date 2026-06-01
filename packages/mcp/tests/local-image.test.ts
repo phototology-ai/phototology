@@ -68,6 +68,17 @@ describe('readImage', () => {
     0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
     0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, // IHDR chunk header
   ]);
+  // AVIF: ISO-BMFF ftyp box with brand "avif" (bytes 4-7 "ftyp", 8-11 "avif")
+  const AVIF_BYTES = Buffer.from([
+    0x00, 0x00, 0x00, 0x18, // box size
+    0x66, 0x74, 0x79, 0x70, // "ftyp"
+    0x61, 0x76, 0x69, 0x66, // "avif"
+    0x00, 0x00, 0x00, 0x00, // minor version
+  ]);
+  // TIFF little-endian: "II*\0" (49 49 2A 00) + IFD offset
+  const TIFF_BYTES = Buffer.from([
+    0x49, 0x49, 0x2a, 0x00, 0x08, 0x00, 0x00, 0x00,
+  ]);
 
   it('reads a valid JPEG file', () => {
     const filePath = path.join(tmpDir, 'tiny.jpg');
@@ -81,6 +92,22 @@ describe('readImage', () => {
     fs.writeFileSync(filePath, PNG_BYTES);
     const bytes = readImage(filePath);
     expect(bytes).toEqual(PNG_BYTES);
+  });
+
+  // The backend's Sharp pipeline decodes AVIF + TIFF; the MCP gate must not be
+  // stricter than the server (regression: 11 AVIFs bounced live 2026-06-01).
+  it('reads a valid AVIF file', () => {
+    const filePath = path.join(tmpDir, 'tiny.avif');
+    fs.writeFileSync(filePath, AVIF_BYTES);
+    const bytes = readImage(filePath);
+    expect(bytes).toEqual(AVIF_BYTES);
+  });
+
+  it('reads a valid TIFF file', () => {
+    const filePath = path.join(tmpDir, 'tiny.tiff');
+    fs.writeFileSync(filePath, TIFF_BYTES);
+    const bytes = readImage(filePath);
+    expect(bytes).toEqual(TIFF_BYTES);
   });
 
   it('throws FILE_NOT_FOUND for missing files', () => {
@@ -115,6 +142,9 @@ describe('readImage', () => {
       fail('expected throw');
     } catch (err) {
       expect((err as LocalImageError).code).toBe('UNSUPPORTED_FORMAT');
+      // The error must stay actionable: list the accepted set + a conversion route.
+      expect((err as LocalImageError).message).toContain('AVIF, TIFF');
+      expect((err as LocalImageError).message).toContain('sips -s format jpeg');
     }
   });
 

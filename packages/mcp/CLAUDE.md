@@ -1,5 +1,5 @@
 # @phototology/mcp Development Protocol
-> **Version:** 1.2.0 | **Architecture:** MCP stdio server wrapping @phototology/sdk | **Updated:** 2026-06-01
+> **Version:** 1.2.1 | **Architecture:** MCP stdio server wrapping @phototology/sdk | **Updated:** 2026-06-01
 
 ## What This Is
 
@@ -91,7 +91,7 @@ Tools are `readOnlyHint: true`, `destructiveHint: false`. Successful results ret
 Shared file-handling helper used by all three image-accepting tools. Single source of truth for:
 
 - Path resolution: absolute or `~/`-prefixed only. Relative paths and `~user/` forms are rejected with `LocalImageError` (code `RELATIVE_PATH_REJECTED`).
-- File reads: `lstat` (not stat) → symlink rejection → size cap (10MB raw) → magic-byte format sniff (JPEG/PNG/GIF/WebP/HEIC).
+- File reads: `lstat` (not stat) → symlink rejection → size cap (10MB raw) → magic-byte format sniff (JPEG/PNG/GIF/WebP/HEIC/AVIF/TIFF — the set the backend Sharp pipeline can decode; 1.2.1 widened from the old narrower gate that bounced AVIF the server could handle).
 - Base64 validation: regex shape + length mod 4 check before `Buffer.from(...)` (which silently accepts garbage).
 - Glob expansion via `fast-glob`: `onlyFiles`, `suppressErrors`, no symlink follow, 200-file cap.
 - sha256 hashing via `node:crypto`.

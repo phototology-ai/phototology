@@ -1,6 +1,6 @@
 {
   "name": "@phototology/mcp",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "mcpName": "@phototology/mcp",
   "description": "Persistent memory for visual intelligence. MCP server for the Phototology registry: analyze photos with composable lenses, enrich files with EXIF/IPTC/XMP metadata, and look up cached results for free. Works with local files. Analyze once. Remember forever.",
   "license": "MIT",

@@ -72,7 +72,7 @@ For batch: use `imagePaths: string[]` for local paths (supports globs like `~/va
 
 `lookup_photo` with `imagePath` / `imageBase64` runs a transparent sha256→pHash cascade — always free, always checks both exact-bytes and perceptually-similar matches.
 
-Per-image cap: 10MB raw. Batch cap: 200 inputs total per call. Supported formats: JPEG, PNG, GIF, WebP, HEIC.
+Per-image cap: 10MB raw. Batch cap: 200 inputs total per call. Supported formats: JPEG, PNG, GIF, WebP, HEIC, AVIF, TIFF.
 
 ## Setup: pick your editor
 
