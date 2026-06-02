@@ -32,7 +32,7 @@ The interactive wizard asks for your API key and writes the config for whichever
 | Tool | What it does | Cost |
 |------|--------------|------|
 | `analyze_photo` | Run AI vision against ONE image and return structured facts per lens. Accepts `imageUrl`, `imageBase64`, or `imagePath`. | 1 credit per lens. Re-running cached lenses on the same photo: 0. |
-| `analyze_batch` | Analyze 1 to 200 photos in a single call. Internally lookup-first per URL (20 in flight), then analyzes cache-miss photos with bounded concurrency (25 in flight). For thousands, loop in slices of 200. Accepts `imageUrls`, `imagesBase64`, or `imagePaths` (with glob support). | 1 credit per lens per non-cached photo. Cache hits free. |
+| `analyze_batch` | Analyze 1 to 200 photos in a single call. Internally lookup-first per URL (20 in flight), then analyzes cache-miss photos with bounded concurrency (5 in flight, matching the API per-user cap). For thousands, loop in slices of 200. Accepts `imageUrls`, `imagesBase64`, or `imagePaths` (with glob support). | 1 credit per lens per non-cached photo. Cache hits free. |
 | `lookup_photo` | Check if a single photo has already been analyzed; return all cached lens results. Accepts `sha256`, `pHash`, `imageUrl`, `imageBase64`, or `imagePath` (cascade). | Free. |
 | `enrich_photo` | Write cached lens output into a photo's EXIF/IPTC/XMP metadata so the structured intelligence travels with the file. Accepts `imageUrl`, `imageBase64`, or `imagePath` plus an optional `outputPath` to save the enriched bytes back to disk. | 5 credits per call. |
 | `list_lenses` | Enumerate available lenses and stacks with descriptions and output fields. | Free. |
