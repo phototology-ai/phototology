@@ -4,7 +4,13 @@ import { type PhototologyClient, LENS_FIELDS, PRESET_IDS, type LensId } from '@p
 import { renderToolError } from './errors';
 import { readImage, resolvePath, validateBase64, LocalImageError } from '../lib/local-image';
 
-const LENS_IDS = Object.keys(LENS_FIELDS) as [LensId, ...LensId[]];
+// `vehicle-condition` is in LENS_FIELDS (owns output) but is STACK-ONLY — the
+// API rejects it on direct selection (moduleComposition.ts INTERNAL_MODULES).
+// Keep it out of the selectable `lenses`/`modules` enum. (2.0.0 Pillar B: the
+// SDK should own this internal-lens list.)
+const INTERNAL_LENS_IDS = new Set<string>(['vehicle-condition']);
+const LENS_IDS = (Object.keys(LENS_FIELDS) as LensId[])
+  .filter((id) => !INTERNAL_LENS_IDS.has(id)) as [LensId, ...LensId[]];
 
 const AnalyzeInputSchema = {
   imageUrl: z.string().url().optional()

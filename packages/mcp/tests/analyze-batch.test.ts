@@ -432,4 +432,44 @@ describe('analyze_batch local input modes', () => {
     const analyzed = payload.results.filter((r: any) => r.source === 'fresh');
     expect(analyzed).toHaveLength(2);
   });
+
+  // Regression (1.2.1, live 2026-06-01): a zero-charge analyze means the server
+  // delta-billed everything from cache. Local files skip the client lookup, so
+  // this is the only signal the re-run was free — it must count as a cache hit
+  // AND show up in estimatedCreditsSaved (previously stuck at 0 for local files).
+  it('counts a zero-charge analyze (server delta hit) as a cache hit + saving', async () => {
+    const server = new McpServer({ name: 'test', version: '0.0.1' });
+    const cb = captureToolCallback(server, 'analyze_batch');
+    mockLookup.mockResolvedValue(emptyLookupResp()); // lookup misses -> analyze runs
+    mockAnalyze
+      .mockResolvedValueOnce(freshAnalyzeResp(0)) // server returned it free (cached)
+      .mockResolvedValueOnce(freshAnalyzeResp(1)); // genuine fresh charge
+
+    const res = await cb({
+      imageUrls: ['https://example.com/a.jpg', 'https://example.com/b.jpg'],
+      lenses: ['dating'],
+    });
+    const payload = JSON.parse(res.content[0].text);
+
+    expect(payload.totalCacheHits).toBe(1);
+    expect(payload.totalAnalyzed).toBe(1);
+    expect(payload.totalCreditsCharged).toBe(1);
+    expect(payload.estimatedCreditsSaved).toBe(1); // lensCount(1) - charged(0) on the cached one
+  });
+});
+
+describe('analyze_batch — selectable lens enum', () => {
+  // Regression (1.2.1): vehicle-condition is in LENS_FIELDS but stack-only; the
+  // API rejects it on direct selection, so it must not appear in the `lenses` enum.
+  it('rejects vehicle-condition but accepts a real lens', () => {
+    const server = new McpServer({ name: 'test', version: '0.0.1' });
+    const spy = jest.spyOn(server, 'registerTool');
+    registerTools(server, 'pt_test_abc123');
+    const call = spy.mock.calls.find((c) => c[0] === 'analyze_batch');
+    if (!call) throw new Error('analyze_batch not registered');
+    const lensesSchema = (call[1] as any).inputSchema.lenses;
+
+    expect(lensesSchema.safeParse(['vehicle-condition']).success).toBe(false);
+    expect(lensesSchema.safeParse(['dating']).success).toBe(true);
+  });
 });

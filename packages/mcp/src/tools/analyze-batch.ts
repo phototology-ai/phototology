@@ -4,7 +4,14 @@ import { type PhototologyClient, LENS_FIELDS, PRESET_IDS, type LensId } from '@p
 import { renderToolError } from './errors';
 import { readImage, expandGlobs, validateBase64, LocalImageError } from '../lib/local-image';
 
-const LENS_IDS = Object.keys(LENS_FIELDS) as [LensId, ...LensId[]];
+// `vehicle-condition` lives in LENS_FIELDS (it owns output) but is STACK-ONLY:
+// the API rejects it on direct selection as an INTERNAL_MODULE
+// (phototology-api/src/services/moduleComposition.ts INTERNAL_MODULES). Exclude
+// it from the directly-selectable `lenses` enum so we never offer a lens the
+// server will refuse. (2.0.0 Pillar B: the SDK should own this list.)
+const INTERNAL_LENS_IDS = new Set<string>(['vehicle-condition']);
+const LENS_IDS = (Object.keys(LENS_FIELDS) as LensId[])
+  .filter((id) => !INTERNAL_LENS_IDS.has(id)) as [LensId, ...LensId[]];
 
 /** Hard cap per tool call. For larger jobs, the agent loops the tool. */
 const MAX_BATCH = 200;
@@ -351,13 +358,18 @@ export function registerAnalyzeBatch(server: McpServer, client: PhototologyClien
               ...(lenses ? { modules: lenses } : { preset: stack }),
               ...(refresh !== undefined ? { refresh } : {}),
             });
+            const charged = result.usage?.creditsCharged ?? 0;
             outcomes[idx] = {
               input: input.label,
               ...(input.kind === 'url' ? { imageUrl: input.value } : {}),
               ...(input.kind === 'base64' && input.sourcePath ? { imagePath: input.sourcePath } : {}),
-              source: 'fresh',
+              // A zero charge means the server delta-billed everything from cache
+              // (full hit). Local files skip the client-side lookup, so this is the
+              // ONLY signal that a local re-run was free — without it those hits
+              // were mislabeled 'fresh' and their savings stayed invisible.
+              source: charged === 0 ? 'cache' : 'fresh',
               output: result.output as Record<string, unknown>,
-              creditsCharged: result.usage?.creditsCharged ?? 0,
+              creditsCharged: charged,
             };
           } catch (err: unknown) {
             outcomes[idx] = {
@@ -381,7 +393,18 @@ export function registerAnalyzeBatch(server: McpServer, client: PhototologyClien
         const totalErrors = allOutcomes.filter((o) => o.source === 'error').length;
         const totalCreditsCharged = allOutcomes.reduce((sum, o) => sum + (o.creditsCharged ?? 0), 0);
         const lensCount = (lenses ?? []).length || 1;
-        const estimatedCreditsSaved = totalCacheHits * lensCount;
+        // Savings = what a full fresh run would have cost minus what we were
+        // actually charged, summed over non-error photos. Captures BOTH URL
+        // registry-lookup hits AND local-file server-side delta savings (which
+        // come back creditsCharged:0 with no client-side lookup, so the old
+        // `totalCacheHits * lensCount` — counting only URL lookups — reported 0
+        // for them). Best-effort in stack mode: the stack's lens count isn't
+        // known client-side, so lensCount falls back to 1 and stack savings
+        // under-report (never over-report). See the dogfooding findings doc.
+        const estimatedCreditsSaved = allOutcomes.reduce(
+          (sum, o) => o.source === 'error' ? sum : sum + Math.max(0, lensCount - (o.creditsCharged ?? 0)),
+          0,
+        );
 
         const payload: BatchPayload = {
           // Includes pre-validation errors so the count reflects everything
