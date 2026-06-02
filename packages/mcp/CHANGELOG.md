@@ -2,6 +2,20 @@
 
 All notable changes to `@phototology/mcp` are tracked here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning follows [SemVer](https://semver.org/).
 
+## [1.2.1] — 2026-06-01
+
+Patch release hardening the local-file path from live dogfooding. All additive/non-breaking.
+
+### Added
+- **AVIF + TIFF accepted** by the local-file/base64 gate, matching what the backend Sharp pipeline already decodes. Previously these bounced with `UNSUPPORTED_FORMAT` despite the server handling them. The `UNSUPPORTED_FORMAT` message now lists the full accepted set and suggests a one-line conversion for RAW/other formats.
+
+### Fixed
+- **`analyze_batch` no longer self-throttles.** Concurrency lowered from 25 to 5 to match the API's per-user `/analyze` cap, so large batches queue client-side instead of getting 429'd. (The previous 25 accounted only for the 600 RPM rate limit, not the separate concurrency limiter.)
+- **`estimatedCreditsSaved` now counts local-file savings.** It derives from each photo's real `creditsCharged` (a zero-charge analyze is a cache hit), so server-side delta savings on local files are no longer invisible.
+- **`vehicle-condition` removed from the selectable `lenses`/`modules` enum** — it is stack-only and the API rejects it on direct selection.
+
+> Related: `warmCaption` no longer truncates mid-word and its cap was raised 150→240. That fix lives in `@phototology/core` (the analysis backend) and reaches you via the API, not this package.
+
 ## [1.2.0] — 2026-06-01
 
 First coordinated 1.2.0 cut with `@phototology/sdk`. Adds a seventh tool (`enrich_photo`), local-file and base64 image input on every image-accepting tool, and per-tool usage telemetry. Existing `imageUrl` callers see no behavior change.

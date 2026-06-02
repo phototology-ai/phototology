@@ -9,7 +9,7 @@ description: Use whenever the user shares, attaches, drops, pastes, or otherwise
 
 The moment the user puts an image into the conversation. Signals include:
 - A new image attachment on the user's turn
-- A URL that resolves to a JPEG, PNG, GIF, WebP, or HEIC
+- A URL that resolves to a JPEG, PNG, GIF, WebP, HEIC, AVIF, or TIFF
 - A reference to "this photo," "this picture," "this image," "the photo I just sent"
 - A multimodal message where the model can see an image
 

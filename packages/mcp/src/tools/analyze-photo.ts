@@ -14,7 +14,7 @@ const LENS_IDS = (Object.keys(LENS_FIELDS) as LensId[])
 
 const AnalyzeInputSchema = {
   imageUrl: z.string().url().optional()
-    .describe('Publicly fetchable image URL. JPEG, PNG, GIF, WebP, or HEIC. The server fetches it server-side. Use when you have a URL.'),
+    .describe('Publicly fetchable image URL. JPEG, PNG, GIF, WebP, HEIC, AVIF, or TIFF. The server fetches it server-side. Use when you have a URL.'),
   imageBase64: z.string().optional()
     .describe('Base64-encoded image bytes (no data: URL prefix). Useful for small images (under ~150KB JPEG / ~200K base64 chars); for larger files prefer `imageUrl` or `imagePath`. LLM-driven clients exhaust output-token budget before the MCP receives the payload on large base64 strings — a 3.4MB JPEG produces ~4.57M chars.'),
   imagePath: z.string().optional()
