@@ -1,0 +1,80 @@
+name: Publish to npm (with provenance)
+
+# Manual, deliberate publish of the public Phototology packages WITH npm
+# provenance (a cryptographic attestation linking each tarball to this public
+# commit + this workflow run). Provenance is the main lever on the npm/Socket
+# Supply-Chain score and removes the "published from someone's laptop" gap.
+#
+# Versions come from each package.json — bump them in the private monorepo; they
+# sync here. This workflow only builds + publishes the current versions.
+#
+# Prerequisites (one-time):
+#   - Repo secret NPM_TOKEN = an npm "Automation" access token with publish
+#     rights on @phototology/* and phototology.
+#   - This repo is public and each package's package.json `repository.url`
+#     points here (required for provenance to verify).
+#
+# Source of truth for this file: nlakios monorepo scripts/public-mirror/.
+# Edit it there and re-run scripts/public-mirror/deploy.sh — not here directly.
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: "Which package to publish (version is read from its package.json)"
+        required: true
+        default: mcp
+        type: choice
+        options:
+          - sdk
+          - mcp
+          - phototology
+          - all
+
+permissions:
+  contents: read
+  id-token: write # REQUIRED: lets npm mint the provenance attestation via OIDC
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # No `version:` here on purpose — action-setup reads the pinned
+      # packageManager field from package.json (passing both errors out).
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build (sdk + mcp; the bare `phototology` package has no build)
+        run: |
+          pnpm --filter @phototology/sdk build
+          pnpm --filter @phototology/mcp build
+
+      - name: Publish with provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          publish_one() {
+            local name="$1" out
+            out="$(mktemp -d "${RUNNER_TEMP}/pack.XXXXXX")"
+            # pnpm pack rewrites workspace:* deps to the real version in the tarball
+            # (npm publish would NOT) — verified: @phototology/mcp -> @phototology/sdk@1.2.0.
+            pnpm --filter "${name}" pack --pack-destination "${out}"
+            # npm (not pnpm) mints the provenance attestation for the prebuilt tarball.
+            npm publish "${out}"/*.tgz --provenance --access public
+          }
+          case "${{ inputs.package }}" in
+            sdk)         publish_one @phototology/sdk ;;
+            mcp)         publish_one @phototology/mcp ;;
+            phototology) publish_one phototology ;;
+            all)         publish_one @phototology/sdk; publish_one @phototology/mcp; publish_one phototology ;;
+          esac

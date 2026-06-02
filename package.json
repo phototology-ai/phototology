@@ -1,0 +1,13 @@
+{
+  "name": "phototology-public",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Workspace root for the public Phototology package mirror (phototology-ai/phototology). Auto-synced from the private monorepo — do not develop here. Exists only so `pnpm install` resolves workspace deps (@phototology/mcp -> @phototology/sdk) for the provenance publish workflow.",
+  "packageManager": "pnpm@10.29.3",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "pnpm --filter @phototology/sdk build && pnpm --filter @phototology/mcp build"
+  }
+}
