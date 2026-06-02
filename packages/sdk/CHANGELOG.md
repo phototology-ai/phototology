@@ -1,5 +1,10 @@
 # @phototology/sdk Changelog
 
+## Unreleased
+
+### Changed
+- **Request timeouts are now bounded end-to-end.** The per-attempt `timeout` default drops from 60s to **30s**, and a new **`maxElapsedMs`** option (default **90s**) caps total wall-clock time across all attempts + backoffs. Previously a stalled upstream could hang a single call for `(maxRetries + 1) × timeout` ≈ 4 minutes; now each attempt's timeout and every backoff are clamped to the remaining budget. Set `maxElapsedMs: 0` for unbounded (legacy) behavior.
+
 ## 1.2.0 (2026-06-01)
 
 First coordinated 1.2.0 cut with `@phototology/mcp`. Adds the `enrich()` method, a top-level `livemode` discriminant, a single-number `total` credit balance, richer `/v1/modules` discovery fields, and removes the `estimatedCostUsd` margin leak (see Breaking Changes). No retry, auth, or constructor behavior changes.

@@ -285,7 +285,8 @@ const client = new PhototologyClient({
   apiKey: 'pt_live_...',       // Required (or set PHOTOTOLOGY_API_KEY env var)
   baseUrl: 'https://...',      // Default: https://api.phototology.com
   maxRetries: 3,               // Default: 3 (retries on retryable errors)
-  timeout: 60_000,             // Default: 60s
+  timeout: 30_000,             // Default: 30s per attempt
+  maxElapsedMs: 90_000,        // Default: 90s overall budget (all attempts + backoff); 0 to disable
 });
 ```
 

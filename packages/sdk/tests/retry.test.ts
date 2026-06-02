@@ -129,4 +129,26 @@ describe('fetchWithRetry', () => {
       fetchWithRetry('https://api.test/v1/analyze', { method: 'POST' }, { maxRetries: 0, timeout: 60000 }),
     ).rejects.toThrow(PhototologyError);
   });
+
+  it('bounds total time via maxElapsedMs instead of running every retry', async () => {
+    // Always-retryable: without the deadline this would run all 11 attempts.
+    const errBody = {
+      error: { code: 'PROVIDER_UNAVAILABLE', message: 'Down', retryable: true, requestId: 'req_d' },
+    };
+    mockFetch.mockResolvedValue(mockResponse(502, errBody));
+
+    const promise = fetchWithRetry(
+      'https://api.test/v1/analyze',
+      { method: 'POST' },
+      { maxRetries: 10, timeout: 60_000, maxElapsedMs: 1_500 },
+    );
+    const assertion = expect(promise).rejects.toThrow(PhototologyError);
+    await jest.runAllTimersAsync();
+    await assertion;
+
+    // 1.5s budget with 500ms/1s backoffs admits only a couple of attempts —
+    // nowhere near maxRetries+1 (11). The deadline, not maxRetries, stops it.
+    expect(mockFetch.mock.calls.length).toBeGreaterThanOrEqual(1);
+    expect(mockFetch.mock.calls.length).toBeLessThan(5);
+  });
 });

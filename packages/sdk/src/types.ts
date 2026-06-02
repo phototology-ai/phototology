@@ -426,8 +426,14 @@ export interface PhototologyClientConfig {
   baseUrl?: string;
   /** Maximum number of retries on retryable errors. Default: 3 */
   maxRetries?: number;
-  /** Request timeout in milliseconds. Default: 60000 */
+  /** Per-attempt request timeout in milliseconds. Default: 30000 */
   timeout?: number;
+  /**
+   * Overall wall-clock budget across ALL attempts + backoffs, in milliseconds.
+   * Bounds the total time a single call can take so a stalled upstream can't
+   * hang for `(maxRetries + 1) * timeout`. Default: 90000. Set 0 to disable.
+   */
+  maxElapsedMs?: number;
   /**
    * Optional User-Agent string. Prepended to the SDK default so server-side
    * observability can identify callers. Example: `"my-app/1.2.0"`.

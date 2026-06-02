@@ -46,7 +46,7 @@ Retry logic lives in `retry.ts` (`fetchWithRetry`), called by the private `reque
 
 **API key redaction:** Every error message passes through `redactApiKeys()` before being set on the `Error` instance. The regex matches `pt_(live|test)_*` — never logs or surfaces raw keys.
 
-**Retry behavior:** Exponential backoff (500ms, 1s, 2s, 4s, capped at 8s). Respects `Retry-After` header exactly. Non-retryable errors throw immediately (no backoff). Default: 3 retries, 60s timeout.
+**Retry behavior:** Exponential backoff (500ms, 1s, 2s, 4s, capped at 8s). Respects `Retry-After` header exactly. Non-retryable errors throw immediately (no backoff). Default: 3 retries, **30s per-attempt timeout, 90s overall wall-clock budget** (`maxElapsedMs`) so a stalled upstream can't hang `(retries+1)×timeout`; each attempt's timeout + backoff are clamped to the remaining budget. Set `maxElapsedMs: 0` to disable. (Was a flat 60s/attempt with no overall cap before 2026-06-02.)
 
 **API key resolution:** Constructor reads `config.apiKey` first, falls back to `PHOTOTOLOGY_API_KEY` env var. Throws `PhototologyError` with `code: 'CONFIG_ERROR'` if neither is present.
 

@@ -14,7 +14,15 @@ import type {
 
 const DEFAULT_BASE_URL = 'https://api.phototology.com';
 const DEFAULT_MAX_RETRIES = 3;
-const DEFAULT_TIMEOUT = 60_000;
+// Per-attempt timeout. Lowered from 60s (2026-06-02): nothing legitimate
+// (lookup/modules/usage/single-photo analyze on flash-lite is ~5s) takes 30s,
+// and a 60s per-attempt ceiling let a stalled upstream hang a single attempt
+// for a full minute.
+const DEFAULT_TIMEOUT = 30_000;
+// Overall wall-clock budget across all attempts + backoffs. Without this, the
+// worst case was (maxRetries + 1) * timeout ≈ 4 minutes on a flaky upstream.
+// 90s leaves room for ~3 attempts of real analyze while bounding the hang.
+const DEFAULT_MAX_ELAPSED_MS = 90_000;
 
 // Bumped when a release needs to flip User-Agent reporting (see CHANGELOG).
 // Kept as a string literal rather than a package.json read so Node and edge
@@ -40,6 +48,7 @@ export class PhototologyClient {
   private readonly baseUrl: string;
   private readonly maxRetries: number;
   private readonly timeout: number;
+  private readonly maxElapsedMs: number;
   private readonly userAgent: string;
   /** Unix ms timestamp — if set and in the future, delay until this time. */
   private rateLimitResetAt: number = 0;
@@ -56,6 +65,7 @@ export class PhototologyClient {
     this.baseUrl = (config?.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, '');
     this.maxRetries = config?.maxRetries ?? DEFAULT_MAX_RETRIES;
     this.timeout = config?.timeout ?? DEFAULT_TIMEOUT;
+    this.maxElapsedMs = config?.maxElapsedMs ?? DEFAULT_MAX_ELAPSED_MS;
     this.userAgent = config?.userAgent
       ? `${config.userAgent} ${DEFAULT_USER_AGENT}`
       : DEFAULT_USER_AGENT;
@@ -176,6 +186,7 @@ export class PhototologyClient {
     const response = await fetchWithRetry(url, init, {
       maxRetries: this.maxRetries,
       timeout: this.timeout,
+      maxElapsedMs: this.maxElapsedMs,
     });
 
     // Track rate limit state from response headers
