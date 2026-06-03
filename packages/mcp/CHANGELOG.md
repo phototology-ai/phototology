@@ -2,6 +2,14 @@
 
 All notable changes to `@phototology/mcp` are tracked here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning follows [SemVer](https://semver.org/).
 
+## [1.3.0] — 2026-06-02
+
+### Changed
+- Bundles **`@phototology/sdk@1.3.0`**, which **bounds total request time** (30s per attempt + a 90s overall wall-clock budget) so a stalled upstream can't hang a call for minutes. No MCP API change.
+
+### Fixed
+- README `analyze_batch` description corrected to "5 in flight" — the actual per-photo analyze concurrency since 1.2.1 (the 1.2.1 tarball shipped a stale "25 in flight").
+
 ## [1.2.1] — 2026-06-01
 
 Patch release hardening the local-file path from live dogfooding. All additive/non-breaking.

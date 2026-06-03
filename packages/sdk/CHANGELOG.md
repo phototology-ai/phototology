@@ -1,6 +1,6 @@
 # @phototology/sdk Changelog
 
-## Unreleased
+## 1.3.0 (2026-06-02)
 
 ### Changed
 - **Request timeouts are now bounded end-to-end.** The per-attempt `timeout` default drops from 60s to **30s**, and a new **`maxElapsedMs`** option (default **90s**) caps total wall-clock time across all attempts + backoffs. Previously a stalled upstream could hang a single call for `(maxRetries + 1) × timeout` ≈ 4 minutes; now each attempt's timeout and every backoff are clamped to the remaining budget. Set `maxElapsedMs: 0` for unbounded (legacy) behavior.

@@ -1,6 +1,6 @@
 {
   "name": "@phototology/sdk",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Persistent memory for visual intelligence. TypeScript SDK for the Phototology registry: composable analysis lenses return structured JSON. Analyze once. Remember forever. Free lookups.",
   "license": "MIT",
   "homepage": "https://phototology.com",

@@ -132,7 +132,7 @@ export function registerAnalyzeBatch(server: McpServer, client: PhototologyClien
         `Hard cap per call: ${MAX_BATCH} photos across all input sources combined. For larger jobs, loop this tool in slices of ${MAX_BATCH}.`,
         '',
         'Internal flow (registry-aware, cost-optimized):',
-        '  1. Per-URL lookup for URL inputs only, with bounded concurrency (20 in flight). Free. Local-file and base64 inputs skip lookup in v1.2.0 (sha256 cascade for local files is a v1.3.0 optimization).',
+        '  1. Per-URL lookup for URL inputs only, with bounded concurrency (20 in flight). Free. Local-file and base64 inputs skip lookup (a sha256 cache cascade for local files is a future optimization).',
         '  2. For URL images whose cached lens output covers every requested lens, return from cache (0 credits charged for that photo).',
         '  3. For the rest, run per-photo analyze with bounded concurrency (5 in flight, matching the API per-user cap so large batches queue client-side instead of getting throttled).',
         '  4. Aggregate per-photo results.',
