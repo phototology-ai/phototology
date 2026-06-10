@@ -75,7 +75,9 @@ describe('MCP renders CreditExhaustedError as tool execution error', () => {
     expect(result.content[0].type).toBe('text');
 
     const text = result.content[0].text;
-    expect(text).toContain('Out of credits');
+    expect(text).toContain('OUT_OF_CREDITS');
+    expect(text).toContain('NOT retryable');
+    expect(text).toContain('STOP');
     expect(text).toContain('5 credits'); // creditsRequired
     expect(text).toContain('12 days'); // resetsInDays
     expect(text).toContain('https://phototology.com/wallet');
@@ -134,9 +136,9 @@ describe('MCP renders CreditExhaustedError as tool execution error', () => {
 
     expect(result.isError).toBe(true);
     const text = result.content[0].text;
-    expect(text).toContain('Out of credits');
+    expect(text).toContain('OUT_OF_CREDITS');
     expect(text).toContain('3 credits');
-    expect(text).not.toContain('reset in');
+    expect(text).not.toContain('auto-refill');
     expect(text).toContain('https://phototology.com/wallet');
   });
 
@@ -154,6 +156,6 @@ describe('MCP renders CreditExhaustedError as tool execution error', () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('boom');
-    expect(result.content[0].text).not.toContain('Out of credits');
+    expect(result.content[0].text).not.toContain('OUT_OF_CREDITS');
   });
 });

@@ -15,7 +15,18 @@ export interface ToolAction {
 
 interface RenderedError {
   content: Array<{ type: 'text'; text: string }>;
-  structuredContent?: { actions: ToolAction[] };
+  structuredContent?: {
+    actions: ToolAction[];
+    // Machine-legible mirror of the OUT_OF_CREDITS text (C1). A model that
+    // reads structuredContent gets the non-retryability as a boolean, not just
+    // prose. `balance` maps to the SDK error's `totalBalance` (the dual-pool
+    // combined total — there is no single `balance` field on the error).
+    code?: string;
+    retryable?: boolean;
+    actionUrl?: string;
+    creditsRequired?: number;
+    balance?: number;
+  };
   isError: true;
 }
 
@@ -47,17 +58,24 @@ export function renderToolError(err: unknown): RenderedError {
   }
 
   if (err instanceof CreditExhaustedError) {
-    const lines = [`Out of credits. You need ${err.creditsRequired} credits.`];
+    // C1 (PostHog remediation): live data showed an agent re-call analyze_photo
+    // 58× against this exact error. The text now leads with the machine code
+    // and spells out non-retryability + agents-cannot-purchase + STOP, so a
+    // model reads "hand off to a human and stop" rather than "transient, retry".
+    // Threat-model C-T2: interpolate ONLY numeric/constant values (balance,
+    // creditsRequired, resetsInDays, the constant purchaseUrl) — never tool
+    // input, filename, or lens names.
+    const lines = [
+      `OUT_OF_CREDITS: Balance ${err.totalBalance}, need ${err.creditsRequired} credits. ` +
+        `This is NOT retryable — re-calling analyze_photo will fail again until a human adds credits. ` +
+        `Agents cannot purchase; checkout requires a human in a browser.`,
+      `ACTION: tell your user to open ${err.purchaseUrl} and buy credits ` +
+        `(first purchase doubles, so Starter $10 buys 2,000 credits the first time).`,
+    ];
     if (typeof err.resetsInDays === 'number') {
-      lines.push(`Your community credits reset in ${err.resetsInDays} days.`);
+      lines.push(`Community credits auto-refill in ${err.resetsInDays} days, but do not poll for that.`);
     }
-    // Surface the first-purchase 2x conversion lever to users who've never
-    // bought before. Backend tracks first_purchase_bonus_granted globally;
-    // any user who lands here for the first time gets 2x credits on whichever
-    // pack they pick.
-    lines.push(
-      'Buy credits at ' + err.purchaseUrl + ' — first purchase doubles, so Starter $10 buys 2,000 credits the first time.',
-    );
+    lines.push('Then STOP. Do not retry analyze_photo or loop get_credits; wait for the user, or move on.');
     return {
       content: [{ type: 'text' as const, text: lines.join(' ') }],
       structuredContent: {
@@ -68,6 +86,11 @@ export function renderToolError(err: unknown): RenderedError {
             url: err.purchaseUrl,
           },
         ],
+        code: 'OUT_OF_CREDITS',
+        retryable: false,
+        actionUrl: err.purchaseUrl,
+        creditsRequired: err.creditsRequired,
+        balance: err.totalBalance,
       },
       isError: true,
     };
