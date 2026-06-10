@@ -27,6 +27,42 @@ The interactive wizard asks for your API key and writes the config for whichever
 
 **With:** the first call bills 1 credit per lens. Every subsequent call on that photo returns the cached lens result for free. The registry compounds with use.
 
+## When to reach for Phototology
+
+Reach for it when:
+
+- An agent needs the same photo understood more than once. The registry makes every re-read free.
+- You want structured fields (dates, condition, text, location, and more) instead of freeform prose.
+- Cost predictability matters. Every tool and every lens discloses its credit cost up front.
+
+Look elsewhere when:
+
+- You need live video or a streaming camera feed. Phototology analyzes still images.
+- You need to identify a specific named person. Phototology describes people; it never matches identity.
+- You want a model to chat about an image. Phototology returns structured data, not dialogue.
+
+## Phototology vs a stateless vision wrapper
+
+| Capability | Stateless vision wrapper | Phototology |
+|---|---|---|
+| Repeat calls on the same photo | Pays the vision model again every time | Cached free forever, keyed by perceptual hash |
+| Memory across calls | None | Persistent registry (sha256 + pHash) |
+| Output | Freeform text | Structured JSON, one field set per lens |
+| Cost to the agent | Opaque | Per-tool, per-lens credit cost disclosed |
+| Near-duplicate detection | None | Exact (sha256) and perceptual (pHash) matching |
+
+The persistent registry, the perceptual-hash dedup, and the free re-reads are the difference.
+
+## What Phototology does not do
+
+Stated plainly, so an agent can route correctly:
+
+- **No identity recognition.** The `people` lens reports physical observations and a head count, never a name or a face match.
+- **No checkout inside the MCP.** `purchase_credits` returns a wallet deep-link. Stripe checkout needs a browser.
+- **No C2PA signing yet.** `enrich_photo` writes EXIF, IPTC, and XMP. `formats: ["c2pa"]` is rejected.
+- **No remote endpoint yet.** The server runs over stdio. A hosted transport is a follow-up.
+- **No local model.** Every analyze call reaches the hosted Phototology API. An API key and a network connection are required.
+
 ## 7 tools at a glance
 
 | Tool | What it does | Cost |
@@ -36,8 +72,10 @@ The interactive wizard asks for your API key and writes the config for whichever
 | `lookup_photo` | Check if a single photo has already been analyzed; return all cached lens results. Accepts `sha256`, `pHash`, `imageUrl`, `imageBase64`, or `imagePath` (cascade). | Free. |
 | `enrich_photo` | Write cached lens output into a photo's EXIF/IPTC/XMP metadata so the structured intelligence travels with the file. Accepts `imageUrl`, `imageBase64`, or `imagePath` plus an optional `outputPath` to save the enriched bytes back to disk. | 5 credits per call. |
 | `list_lenses` | Enumerate available lenses and stacks with descriptions and output fields. | Free. |
-| `get_credits` | Read the account credit balance — `total` spendable credits plus `reserved` in-flight holds. | Free. |
+| `get_credits` | Read the account credit balance: `total` spendable credits plus `reserved` in-flight holds. | Free. |
 | `purchase_credits` | Return a wallet deep-link the user can open to buy more credits. | Free. |
+
+**How they chain.** Start free: `lookup_photo` for a single image, or `get_credits` before a batch. Analyze only the cache misses with `analyze_photo` (one image) or `analyze_batch` (2 or more). Bake the results into the file with `enrich_photo`. `list_lenses` and `purchase_credits` are free helpers you can call any time.
 
 ## Pricing
 
@@ -60,17 +98,17 @@ The interactive wizard asks for your API key and writes the config for whichever
 
 ## Local files
 
-All three image-accepting tools (`analyze_photo`, `analyze_batch`, `lookup_photo`) accept three input modes — pick whichever fits how the photo arrived:
+All three image-accepting tools (`analyze_photo`, `analyze_batch`, `lookup_photo`) accept three input modes. Pick whichever fits how the photo arrived:
 
 | Input field | When to use |
 |---|---|
 | `imageUrl` | The photo is at a publicly-fetchable URL. |
-| `imagePath` | The photo is on the user's local disk **as seen by the machine running the MCP server** (typically the user's laptop). Pass an absolute path (`/Users/...`) or `~/`-prefixed (`~/photos/...`). The MCP reads the file, validates it, and forwards the bytes. **Not for agent-sandbox paths** (e.g. Claude's `/mnt/user-data/uploads/...`) — that sandbox is invisible to a locally-installed MCP. For agent-sandboxed uploads, use `imageBase64` (small images) or `imageUrl` (hostable images of any size). |
+| `imagePath` | The photo is on the user's local disk **as seen by the machine running the MCP server** (typically the user's laptop). Pass an absolute path (`/Users/...`) or `~/`-prefixed (`~/photos/...`). The MCP reads the file, validates it, and forwards the bytes. **Not for agent-sandbox paths** (e.g. Claude's `/mnt/user-data/uploads/...`): that sandbox is invisible to a locally-installed MCP. For agent-sandboxed uploads, use `imageBase64` (small images) or `imageUrl` (hostable images of any size). |
 | `imageBase64` | You already have the image bytes in memory as a base64 string. Practical envelope: ~50-150KB JPEG / ~70-200K base64 chars. Above that, LLM-driven clients run out of output-token budget before the MCP receives the full payload (a 3.4MB JPEG produces ~4.57M chars). For larger images, prefer `imageUrl` or `imagePath`. |
 
 For batch: use `imagePaths: string[]` for local paths (supports globs like `~/vacation/*.jpg`), `imagesBase64: string[]` for base64 arrays, and combine freely with `imageUrls`.
 
-`lookup_photo` with `imagePath` / `imageBase64` runs a transparent sha256→pHash cascade — always free, always checks both exact-bytes and perceptually-similar matches.
+`lookup_photo` with `imagePath` / `imageBase64` runs a transparent sha256→pHash cascade. It is always free, and checks both exact-bytes and perceptually-similar matches.
 
 Per-image cap: 10MB raw. Batch cap: 200 inputs total per call. Supported formats: JPEG, PNG, GIF, WebP, HEIC, AVIF, TIFF.
 
@@ -274,7 +312,7 @@ Keys starting with `pt_test_` use the test sandbox (instant responses, zero cost
 
 ### Anonymous telemetry
 
-When the MCP server completes the initialize handshake with your editor, it reports the editor's stated name + version (e.g. `claude-desktop 0.7.0`, `cursor 0.42`) plus the MCP package version to `api.phototology.com` so we can see which clients are connecting. This is the same domain your tool calls already go through — no third-party SDK is bundled, and your API key is the only credential used. No image content, file paths, prompts, or tool inputs/outputs are sent.
+When the MCP server completes the initialize handshake with your editor, it reports the editor's stated name + version (e.g. `claude-desktop 0.7.0`, `cursor 0.42`) plus the MCP package version to `api.phototology.com` so we can see which clients are connecting. This is the same domain your tool calls already go through. No third-party SDK is bundled, and your API key is the only credential used. No image content, file paths, prompts, or tool inputs/outputs are sent.
 
 Set `PHOTOTOLOGY_MCP_NO_TELEMETRY=1` in the same env block as `PHOTOTOLOGY_API_KEY` to disable.
 

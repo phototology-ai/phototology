@@ -90,3 +90,41 @@ describe('registerTools', () => {
     expect(PhototologyClient).toHaveBeenCalledWith({ apiKey: 'pt_test_mykey' });
   });
 });
+
+// Glama Tool Definition Quality floor: server score = 60% mean + 40% MIN, so
+// the weakest tool sets the ceiling. Every description must answer the 6
+// rubric questions (what / when / when-NOT / cost / returns / chains-with).
+describe('tool description quality (Glama rubric floor — B2)', () => {
+  function descriptions(): Record<string, string> {
+    const server = new McpServer({ name: 'test', version: '0.0.1' });
+    const spy = jest.spyOn(server, 'registerTool');
+    registerTools(server, 'pt_test_abc123');
+    const out: Record<string, string> = {};
+    for (const call of spy.mock.calls) {
+      out[call[0] as string] = (call[1] as { description: string }).description;
+    }
+    return out;
+  }
+
+  it('every tool description clears the floor: length + cost + returns + a usage trigger', () => {
+    const d = descriptions();
+    expect(Object.keys(d)).toHaveLength(7);
+    for (const [name, desc] of Object.entries(d)) {
+      // min-length floor — a one-liner cannot carry the 6 rubric elements
+      expect(desc.length).toBeGreaterThanOrEqual(250);
+      // cost disclosure (agents reason about budget)
+      expect(desc).toMatch(/credit|free|\$0\.01|cost/i);
+      // returns shape
+      expect(desc).toMatch(/returns?|output/i);
+      // when-to-use trigger
+      expect(desc).toMatch(/\buse (this|it|when)\b|useful when|when to use|call this|whenever|before any/i);
+    }
+  });
+
+  it('the lifted FLOOR (get_credits + purchase_credits) carries an explicit when-NOT-to-use anti-trigger', () => {
+    const d = descriptions();
+    for (const name of ['get_credits', 'purchase_credits']) {
+      expect(d[name]).toMatch(/when not to use|do not call|not needed/i);
+    }
+  });
+});

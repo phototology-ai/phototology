@@ -1,6 +1,6 @@
 # @phototology/sdk
 
-**Persistent memory for visual intelligence.**
+**Persistent memory for visual intelligence. Analyze once. Remember forever.**
 
 TypeScript SDK for the [Phototology API](https://api.phototology.com/v1/docs). The first call on a photo bills 1 credit per lens; subsequent calls on the same image return cached lens results for free.
 
@@ -50,6 +50,36 @@ const result = await client.analyze({
 console.log(result.output);           // Structured analysis data
 console.log(result.usage.totalTokens); // Token usage
 ```
+
+## When to reach for this SDK
+
+Reach for it when:
+
+- Your service analyzes the same photo more than once. The registry makes every re-read free.
+- You want structured, typed fields (dates, condition, text, location, and more) instead of freeform prose.
+- Cost predictability matters. Every call returns `usage.creditsCharged`, and a full cache hit returns `0`.
+
+## Phototology vs a stateless vision wrapper
+
+| Capability | Stateless vision wrapper | Phototology |
+|---|---|---|
+| Repeat calls on the same photo | Pays the vision model again every time | `usage.creditsCharged: 0` on a cache hit |
+| Memory across calls | None | Persistent registry (sha256 + pHash) |
+| Output | Freeform text | Structured JSON, one field set per lens |
+| Cost visibility | Opaque | `usage.creditsCharged` on every call; `client.usage()` reads the balance |
+| Near-duplicate detection | None | `client.lookup()` matches exact (sha256) and perceptual (pHash) |
+
+The persistent registry, the perceptual-hash dedup, and the free re-reads are the difference.
+
+## What this SDK does not do
+
+Stated plainly:
+
+- **No identity recognition.** The `people` lens reports physical observations and a head count, never a name or a face match.
+- **No C2PA signing yet.** `client.enrich()` writes EXIF, IPTC, and XMP. `formats: ['c2pa']` is rejected.
+- **`enrich()` requires a prior `analyze()`** on the same photo, or it throws `ValidationError` with `PHOTO_NOT_IN_REGISTRY`.
+- **No local model.** Every `analyze()` reaches the hosted Phototology API. An API key and a network connection are required.
+- **Output fields are lens-dependent.** `PhotoOutput` and `VehicleOutput` are typed as opaque records; the fields present depend on which lenses ran.
 
 ## Scaffolding CLI
 
@@ -178,7 +208,7 @@ Read the authenticated key's credit balance. Free, no credits charged. Call this
 const usage = await client.usage();
 
 usage.tier;                          // "starter" | "growth" | ...
-usage.total;                         // Spendable credit balance — the number to show
+usage.total;                         // Spendable credit balance: the number to show
 usage.reserved;                      // Credits held against in-flight analyze calls
 
 // Effective spendable after in-flight holds:
@@ -252,22 +282,22 @@ try {
   await client.analyze({ imageUrl: '...' });
 } catch (err) {
   if (err instanceof RateLimitedError) {
-    // 429 — retry after backoff
+    // 429: retry after backoff
     console.log(`Rate limited. Retry after ${err.retryAfter}s`);
   } else if (err instanceof AuthenticationError) {
-    // 401 — invalid or expired API key
+    // 401: invalid or expired API key
     console.log('Check your API key');
   } else if (err instanceof ValidationError) {
-    // 400 — bad input, invalid image, content filtered
+    // 400: bad input, invalid image, content filtered
     console.log(`Validation error: ${err.message}`);
   } else if (err instanceof ProviderError) {
-    // 502 — upstream AI provider unavailable (retryable)
+    // 502: upstream AI provider unavailable (retryable)
     console.log(`Provider issue: ${err.message}`);
   } else if (err instanceof ParseError) {
-    // 500 — AI returned unparseable output (retryable)
+    // 500: AI returned unparseable output (retryable)
     console.log(`Parse error: ${err.message}`);
   } else if (err instanceof InternalError) {
-    // 500 — server error (not retryable)
+    // 500: server error (not retryable)
     console.log(`Internal error: ${err.message}`);
   } else if (err instanceof PhototologyError) {
     // Base class catch-all
@@ -324,7 +354,7 @@ import type {
 } from '@phototology/sdk';
 ```
 
-The response is a discriminated union on `outputSchema` — narrow with a type guard:
+The response is a discriminated union on `outputSchema`. Narrow it with a type guard:
 
 ```typescript
 if (result.outputSchema === 'photo') {
@@ -374,7 +404,7 @@ The registry is the source of truth. Runtime callers can also hit `client.module
 
 - [API Documentation](https://api.phototology.com/v1/docs)
 - [OpenAPI Spec](https://api.phototology.com/v1/openapi.json)
-- [MCP Server](https://www.npmjs.com/package/@phototology/mcp) — use Phototology from AI coding assistants
+- [MCP Server](https://www.npmjs.com/package/@phototology/mcp): use Phototology from AI coding assistants
 - [GitHub](https://github.com/phototology-ai/phototology/tree/main/packages/sdk)
 
 ## License
