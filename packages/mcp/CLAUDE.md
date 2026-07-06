@@ -100,4 +100,4 @@ Error type: `LocalImageError` with `code: LocalImageErrorCode` union. Rendered b
 
 **When adding new tools that accept image input:** reuse this helper, don't reinvent. The path/format/size/base64 rules MUST be consistent across tools.
 
-**For `lookup_photo` specifically:** local inputs run a transparent sha256→pHash cascade. The cascade short-circuits on any non-`'none'` matchType from the sha256 GET (covers both `'exact'` and the rare `'fuzzy'` case caused by the API's dummy-pHash substitution at `packages/phototology-api/src/v2/lookup.ts:266`).
+**For `lookup_photo` specifically:** local inputs run a transparent sha256→pHash cascade. The cascade short-circuits on any non-`'none'` matchType from the sha256 GET (covers both `'exact'` and the rare `'fuzzy'` case caused by the API's dummy-pHash substitution at `packages/phototology-api/src/v2/lookup.ts`).
