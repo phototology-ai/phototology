@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { type PhototologyClient, LENS_FIELDS, PRESET_IDS, type LensId } from '@phototology/sdk';
 import { renderToolError } from './errors';
-import { readImage, expandGlobs, validateBase64, LocalImageError } from '../lib/local-image';
+import { readImage, expandGlobs, validateBase64, LocalImageError, assertNotHeic, detectBase64Format } from '../lib/local-image';
 
 // `vehicle-condition` lives in LENS_FIELDS (it owns output) but is STACK-ONLY:
 // the API rejects it on direct selection as an INTERNAL_MODULE
@@ -225,6 +225,8 @@ export function registerAnalyzeBatch(server: McpServer, client: PhototologyClien
             const label = `base64[${i}]`;
             try {
               validateBase64(b64);
+              // Refuse HEIC bytes here too; the API would only answer 422 IMAGE_INVALID.
+              assertNotHeic(detectBase64Format(b64), label);
               inputs.push({ kind: 'base64', value: b64, label });
             } catch (err: unknown) {
               const message = err instanceof LocalImageError

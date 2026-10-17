@@ -382,6 +382,53 @@ describe('analyze_batch local input modes', () => {
     }
   });
 
+  /** ISO-BMFF header: size, 'ftyp', major brand, minor version, compatible brands. */
+  function ftyp(major: string, ...compatible: string[]): Buffer {
+    const brands = Buffer.from(major + '\0\0\0\0' + compatible.join(''), 'ascii');
+    const size = Buffer.alloc(4); size.writeUInt32BE(8 + brands.length);
+    return Buffer.concat([size, Buffer.from('ftyp', 'ascii'), brands, Buffer.alloc(16)]);
+  }
+
+  it('a HEIC file is refused by its bytes, whatever its name, with a conversion hint; the rest still analyze', async () => {
+    // 2026-10-05: 52 HEIC files went to the API and came back as opaque IMAGE_INVALID 422s.
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pt-heic-'));
+    const jpeg = path.join(tmpDir, 'ok.jpg');
+    fs.writeFileSync(jpeg, Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0]));
+    const heic = path.join(tmpDir, 'IMG_5321.HEIC');
+    fs.writeFileSync(heic, ftyp('heic', 'mif1', 'heic'));
+    const renamedHeic = path.join(tmpDir, 'looks-like.jpg');
+    fs.writeFileSync(renamedHeic, ftyp('mif1', 'heic'));
+    // mif1 as the major brand with avif among the compatible brands is an AVIF, which the API decodes.
+    const avif = path.join(tmpDir, 'photo.avif');
+    fs.writeFileSync(avif, ftyp('mif1', 'avif', 'miaf'));
+    mockAnalyze.mockResolvedValue(freshAnalyzeResp(1));
+
+    const server = new McpServer({ name: 't', version: '0' });
+    const cb = captureToolCallback(server, 'analyze_batch');
+    const result = await cb({ imagePaths: [jpeg, heic, renamedHeic, avif], lenses: ['dating'], refresh: true });
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(mockAnalyze).toHaveBeenCalledTimes(2);
+    for (const p of [heic, renamedHeic]) {
+      const outcome = payload.results.find((r: any) => r.imagePath === p);
+      expect(outcome.source).toBe('error');
+      expect(outcome.error).toMatch(/^HEIC_UNSUPPORTED: /);
+      expect(outcome.error).toContain('sips -s format jpeg');
+    }
+    expect(payload.results.find((r: any) => r.imagePath === avif).source).toBe('fresh');
+    expect(payload.totalErrors).toBe(2);
+    expect(payload.totalAnalyzed).toBe(2);
+  });
+
+  it('imagesBase64: HEIC bytes are refused the same way', async () => {
+    const server = new McpServer({ name: 't', version: '0' });
+    const cb = captureToolCallback(server, 'analyze_batch');
+    const result = await cb({ imagesBase64: [ftyp('heic').toString('base64')], lenses: ['dating'], refresh: true });
+    const payload = JSON.parse(result.content[0].text);
+    expect(mockAnalyze).not.toHaveBeenCalled();
+    expect(payload.results[0].error).toMatch(/^HEIC_UNSUPPORTED: /);
+  });
+
   it('rejects when none of imageUrls, imagePaths, imagesBase64 is provided', async () => {
     const server = new McpServer({ name: 'test', version: '0.0.1' });
     const cb = captureToolCallback(server, 'analyze_batch');

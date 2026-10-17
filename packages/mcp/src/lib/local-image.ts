@@ -10,6 +10,7 @@ export type LocalImageErrorCode =
   | 'PERMISSION_DENIED'
   | 'FILE_TOO_LARGE'
   | 'UNSUPPORTED_FORMAT'
+  | 'HEIC_UNSUPPORTED'
   | 'INVALID_BASE64'
   | 'GLOB_TOO_LARGE'
   | 'SYMLINK_REJECTED';
@@ -117,6 +118,12 @@ function detectFormat(bytes: Buffer): 'jpeg' | 'png' | 'gif' | 'webp' | 'heic' |
   ) {
     const brand = bytes.slice(8, 12).toString('ascii');
     if (['avif', 'avis'].includes(brand)) return 'avif';
+    // `mif1` / `msf1` are shared structural brands: an AVIF encoder may put one in the major
+    // slot and `avif` among the compatible brands that follow. Read those before deciding.
+    if (['mif1', 'msf1'].includes(brand)) {
+      const compatible = bytes.slice(12, Math.min(bytes.length, 64)).toString('ascii');
+      if (/avif|avis/.test(compatible)) return 'avif';
+    }
     if (['heic', 'heix', 'hevc', 'hevx', 'mif1', 'msf1', 'heim', 'heis', 'hevm', 'hevs'].includes(brand)) {
       return 'heic';
     }
@@ -171,13 +178,35 @@ export function readImage(absolutePath: string): Buffer {
   if (format === null) {
     throw new LocalImageError(
       'UNSUPPORTED_FORMAT',
-      `Unrecognized image format at ${absolutePath}. Supported: JPEG, PNG, GIF, WebP, HEIC, AVIF, TIFF. ` +
-        `For RAW or other formats, convert to JPEG first (macOS: \`sips -s format jpeg "${absolutePath}" --out out.jpg\`) or pass imageUrl.`,
+      `Unrecognized image format at ${absolutePath}. Supported: JPEG, PNG, GIF, WebP, AVIF, TIFF. ` +
+        `For HEIC, RAW or other formats, convert to JPEG first (macOS: \`sips -s format jpeg "${absolutePath}" --out out.jpg\`) or pass imageUrl.`,
       { path: absolutePath },
     );
   }
+  assertNotHeic(format, absolutePath);
 
   return bytes;
+}
+
+/**
+ * The API's image decoder (sharp without a HEIF plugin) cannot read HEIC/HEIF and answers
+ * with an opaque 422 IMAGE_INVALID; 52 such calls on 2026-10-05 came from one MCP user's
+ * iPhone library. Refuse here, by bytes not by name, with a conversion hint. Shared by every
+ * input mode (local path, base64) and every tool that reads images.
+ */
+export function assertNotHeic(format: ReturnType<typeof detectFormat>, label: string): void {
+  if (format !== 'heic') return;
+  throw new LocalImageError(
+    'HEIC_UNSUPPORTED',
+    `${label} is a HEIC/HEIF image, which the API cannot decode yet. Convert to JPEG first ` +
+      `(macOS: \`sips -s format jpeg "${label}" --out out.jpg\`; iPhone: Settings > Camera > Formats > Most Compatible), then retry.`,
+    { path: label },
+  );
+}
+
+/** Sniff the format of a base64 payload from its first bytes (enough for every magic number we know). */
+export function detectBase64Format(b64: string): ReturnType<typeof detectFormat> {
+  return detectFormat(Buffer.from(b64.slice(0, 128), 'base64'));
 }
 
 export function computeSha256(bytes: Buffer): string {

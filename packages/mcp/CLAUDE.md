@@ -91,7 +91,7 @@ Tools are `readOnlyHint: true`, `destructiveHint: false`. Successful results ret
 Shared file-handling helper used by all three image-accepting tools. Single source of truth for:
 
 - Path resolution: absolute or `~/`-prefixed only. Relative paths and `~user/` forms are rejected with `LocalImageError` (code `RELATIVE_PATH_REJECTED`).
-- File reads: `lstat` (not stat) → symlink rejection → size cap (10MB raw) → magic-byte format sniff (JPEG/PNG/GIF/WebP/HEIC/AVIF/TIFF — the set the backend Sharp pipeline can decode; 1.2.1 widened from the old narrower gate that bounced AVIF the server could handle).
+- File reads: `lstat` (not stat) → symlink rejection → size cap (10MB raw) → magic-byte format sniff (JPEG/PNG/GIF/WebP/AVIF/TIFF — the set the backend Sharp pipeline can decode; 1.2.1 widened from the old narrower gate that bounced AVIF the server could handle) → `assertNotHeic`. **HEIC/HEIF is refused by bytes, not by name (2026-10-16):** the API's sharp build has no HEIF decoder and answered 52 such calls on 2026-10-05 with an opaque 422; `readImage` and the `imagesBase64` branch of `analyze_batch` throw `HEIC_UNSUPPORTED` with a `sips` conversion hint instead. `mif1`/`msf1` major brands are read as AVIF when `avif`/`avis` appears among the compatible brands, since AVIF encoders use those structural brands too.
 - Base64 validation: regex shape + length mod 4 check before `Buffer.from(...)` (which silently accepts garbage).
 - Glob expansion via `fast-glob`: `onlyFiles`, `suppressErrors`, no symlink follow, 200-file cap.
 - sha256 hashing via `node:crypto`.
