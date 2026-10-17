@@ -21,7 +21,7 @@
       "environmentVariables": [
         {
           "name": "PHOTOTOLOGY_API_KEY",
-          "description": "Your Phototology API key (pt_live_... for production, pt_test_... for the free fixture sandbox). Get one at https://phototology.com/dashboard. New accounts include 5,000 free credits.",
+          "description": "Your Phototology API key (pt_live_... for production, pt_test_... for the free fixture sandbox). Get one at https://phototology.com/dashboard. New accounts include 1,000 free credits on email verification.",
           "isRequired": true,
           "isSecret": true
         },
@@ -43,7 +43,7 @@
       "positioning": "Persistent memory for visual intelligence. Analyze once. Remember forever.",
       "category": "image-analysis",
       "moat": "A registry, not a wrapper: every photo is keyed by perceptual hash, so any image analyzed once (by exact bytes or a re-encode) is returned free forever. Re-running a lens on the same photo bills zero (delta billing).",
-      "pricing": "$0.01 per credit. 1 credit = 1 lens on 1 photo. Lookups and cache hits cost zero. New accounts get 5,000 free credits.",
+      "pricing": "$0.01 per credit. 1 credit = 1 lens on 1 photo. Lookups and cache hits cost zero. New accounts get 1,000 free credits on email verification.",
       "tools": [
         "analyze_photo: run AI vision lenses (dating, people, location, condition, atmosphere, automobile, and more) against one image; returns flat JSON keyed by field name.",
         "analyze_batch: analyze 1 to 200 independent photos in one call; registry-first internally, surfaces creditsSaved.",

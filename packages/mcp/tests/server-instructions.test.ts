@@ -5,9 +5,9 @@
  * must accurately reflect the current pricing model.
  *
  * After the pricing v1 launch (2026-05-17), the copy switched from the prior
- * "1,000 community credits per month" monthly grant to the 5,000-credit
- * signup ladder (1,000 for email verification + 4,000 for adding a
- * card-on-file).
+ * "1,000 community credits per month" monthly grant to a signup ladder; since
+ * 2026-10-17 that ladder is one rung: 1,000 credits on email verification
+ * (the card-on-file step is retired).
  */
 
 // Set env BEFORE the module is imported so the top-level "missing key"
@@ -51,8 +51,9 @@ import { buildServerInstructions } from '../src/index';
 describe('buildServerInstructions — pricing v1', () => {
   const instructions = buildServerInstructions();
 
-  it('mentions 5,000 free signup credits', () => {
-    expect(instructions).toMatch(/5,000.+free/i);
+  it('mentions 1,000 free signup credits and never the retired 5,000', () => {
+    expect(instructions).toMatch(/1,000 free credits/i);
+    expect(instructions).not.toMatch(/5,000/);
   });
 
   it('does NOT mention 1,000 credits per month', () => {
@@ -67,14 +68,10 @@ describe('buildServerInstructions — pricing v1', () => {
     expect(instructions).toMatch(/\$0\.01.+credit/i);
   });
 
-  it('mentions the 1,000 / 4,000 signup ladder split', () => {
-    expect(instructions).toMatch(/1,000.+(email|verifying)/i);
-    expect(instructions).toMatch(/4,000.+(card-on-file|card)/i);
-  });
-
-  it('reassures the card is held, not charged', () => {
-    expect(instructions).toMatch(/Stripe holds the card/i);
-    expect(instructions).toMatch(/never charges it without a separate purchase/i);
+  it('ties the grant to email verification and never mentions a card step', () => {
+    expect(instructions).toMatch(/1,000.+(email|verify)/i);
+    expect(instructions).not.toMatch(/4,000/);
+    expect(instructions).not.toMatch(/card-on-file/i);
   });
 
   it('keeps the pack table intact ($10 / $100 / $1,000)', () => {

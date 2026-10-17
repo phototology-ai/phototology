@@ -43,7 +43,7 @@ export function buildServerInstructions(): string {
     '- **Bespoke schema extraction = 5 credits per image** (plus 1 per additional stacked lens, if any).',
     '- **Moderation runs on every analyze, always, free of charge.** It is safety infrastructure, never billed.',
     '- **Cache hits cost zero.** Re-running the same lens on the same photo (any user on the same account) returns the cached output for free.',
-    '- **Pricing: $0.01 per credit. Packs at $10 / $100 / $1,000 for 1,000 / 10,000 / 100,000 credits.** New users start with 5,000 free credits: 1,000 for verifying an email and 4,000 for adding a card-on-file (Stripe holds the card; Phototology never charges it without a separate purchase). The signup grant is one-time, not recurring. Cache hits cost zero credits and the registry keeps re-runs free across sessions.',
+    '- **Pricing: $0.01 per credit. Packs at $10 / $100 / $1,000 for 1,000 / 10,000 / 100,000 credits.** New users start with 1,000 free credits, granted when they verify their email. The signup grant is one-time, not recurring. Cache hits cost zero credits and the registry keeps re-runs free across sessions.',
     '- **Packs** (all at $0.01/credit, no volume discount, intentionally simple):',
     '  - Starter: 1,000 credits, $10',
     '  - Pro: 10,000 credits, $100',

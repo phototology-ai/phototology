@@ -55,5 +55,5 @@ When the user attaches, drops, or references a local image (e.g., a file path in
 - Lookups, lens discovery, balance checks, purchase links: all free.
 - Re-running the same lens on the same photo: free (delta billing).
 - Bespoke schema extraction: 5 credits + 1 per stacked lens.
-- 5,000 free credits at signup: 1,000 for verifying your email + 4,000 for adding a card-on-file. One-time, not recurring.
+- 1,000 free credits at signup, granted when you verify your email. One-time, not recurring.
 - First-purchase 2x bonus: a user's first credit pack ever doubles.

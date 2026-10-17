@@ -247,7 +247,7 @@ result.meta.creditsCharged; // 5
 ## Pricing
 
 - **1 credit = $0.01 = one lens run on one photo.** Stack five lenses on a photo = 5 credits = $0.05.
-- **5,000 free credits when you sign up.** 1,000 for verifying your email, 4,000 for adding a card-on-file. The card is never charged automatically. One-time, not recurring.
+- **1,000 free credits when you sign up.** Granted when you verify your email. One-time, not recurring.
 - **Lookups, lens discovery, balance reads, and purchase links are always free.**
 - **Cache hits cost zero.** Re-running the same lens on the same photo returns the cached output for free.
 - **Bespoke schema extraction = 5 credits per image** (plus 1 per additional stacked lens).

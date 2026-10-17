@@ -15,7 +15,7 @@ description: Use when the user asks about their Phototology credit balance, when
 
 1. Call `get_credits`. Free, instant.
 2. Report the balance plainly. Example:
-   > You have **4,998 credits** available (5,000 signup grant + 0 purchased − 2 reserved). New users start with 5,000 free credits (1,000 for verifying an email + 4,000 for adding a card-on-file).
+   > You have **998 credits** available (1,000 signup grant + 0 purchased − 2 reserved). New users start with 1,000 free credits, granted when they verify their email.
 3. If `community.balance + purchased.balance - reserved < estimated cost of the next operation`:
    - Tell the user how many credits the operation will need.
    - Offer three options: **(a)** proceed anyway (will hit the out-of-credits error), **(b)** reduce scope to fewer lenses, or **(c)** buy more credits.
@@ -31,7 +31,7 @@ description: Use when the user asks about their Phototology credit balance, when
 
 ## Pricing facts you can quote
 - 1 credit = $0.01.
-- New users start with 5,000 free credits: 1,000 for verifying an email + 4,000 for adding a card-on-file. Stripe holds the card; Phototology never charges it without a separate purchase. Signup credits do NOT renew monthly.
+- New users start with 1,000 free credits, granted when they verify their email. Signup credits do NOT renew monthly.
 - Cache hits cost zero credits and the registry keeps re-runs free across sessions.
 - Packs (all at $0.01/credit, no volume discount):
   - Starter: 1,000 credits, $10

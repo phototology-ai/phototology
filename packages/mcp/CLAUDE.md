@@ -72,7 +72,7 @@ Tools are `readOnlyHint: true`, `destructiveHint: false`. Successful results ret
 
 **MCP-layer rename pattern:** `lenses`/`stack` are the preferred argument names on `analyze_photo` and the preferred response keys on `list_lenses`. The SDK still uses `modules` and `preset` internally; the MCP translates. New code should use the new names; old code keeps working during the 90-day deprecation window.
 
-**Pricing model surfaced everywhere** (server instructions, tool descriptions, skills, README): 1 credit = $0.01 per lens per photo. Lookups free. Bespoke 5 credits per image plus 1 per stacked lens. Moderation free + always-on. Cache hits free. New users start with 5,000 free credits via the signup ladder (1,000 for verifying an email, 4,000 for adding a card-on-file; the card is never charged automatically). Packs at 1k/$10, 10k/$100, 100k/$1,000. First-purchase 2x bonus. No subscriptions. (Pricing v1 cutover 2026-05-17; see `docs/superpowers/specs/2026-05-17-phototology-pricing-v1-design.md`.)
+**Pricing model surfaced everywhere** (server instructions, tool descriptions, skills, README): 1 credit = $0.01 per lens per photo. Lookups free. Bespoke 5 credits per image plus 1 per stacked lens. Moderation free + always-on. Cache hits free. New users start with 1,000 free credits, granted when they verify their email (the 4,000-credit card-on-file step was retired 2026-10-17). Packs at 1k/$10, 10k/$100, 100k/$1,000. First-purchase 2x bonus. No subscriptions. (Pricing v1 cutover 2026-05-17; see `docs/superpowers/specs/2026-05-17-phototology-pricing-v1-design.md`.)
 
 ## Phantom Patterns
 
