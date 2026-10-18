@@ -87,7 +87,7 @@ export function toAnalyzeEnvelope(res: AnalyzeResponse, photoSha256: string): An
   const creditsCharged = usage.creditsCharged ?? 0;
   const creditsSaved = usage.creditsSaved ?? (cacheHit ? billableLenses(modulesUsed).length : 0);
   const usd = usage.usd ?? { charged: usdFromCredits(creditsCharged), saved: usdFromCredits(creditsSaved) };
-  const proof = res as unknown as { receipts?: unknown; credentials?: unknown };
+  const proof = res as unknown as { receipts?: unknown };
   const fingerprint = res.livemode === true ? res.fingerprint : undefined;
 
   return {
@@ -106,7 +106,8 @@ export function toAnalyzeEnvelope(res: AnalyzeResponse, photoSha256: string): An
     usage: { ...usage, creditsCharged, creditsSaved, usd, modulesUsed },
     cacheHit,
     receipts: Array.isArray(proof.receipts) ? proof.receipts : [],
-    ...(proof.credentials !== undefined ? { credentials: proof.credentials } : {}),
+    // Spread: the SDK interface has no index signature, the open envelope object does.
+    ...(res.credentials !== undefined ? { credentials: { ...res.credentials } } : {}),
     ...(photoSha256 ? { resource: photoResourceUri(photoSha256) } : {}),
     // A response without `livemode` is never presented as real model output.
     livemode: res.livemode === true,
@@ -137,7 +138,6 @@ export function toLookupEnvelope(
 ): { envelope: LookupPhotoOutput; sha256: string } {
   const entry = (Object.values(res.results ?? {})[0] ?? { matchType: 'none' }) as LookupResponse['results'][string] & {
     receipts?: unknown;
-    credentials?: unknown;
   };
   const { receipts, credentials, ...rest } = entry;
   const sha256 = (entry.matchType !== 'none' && (entry.photo?.sha256 || knownSha256)) || '';
@@ -147,7 +147,7 @@ export function toLookupEnvelope(
     // even though the fields line up; the schema tests parse the result.
     ...(rest as Pick<LookupPhotoOutput, 'matchType' | 'photo' | 'hammingDistance' | 'pdqDistance' | 'matchedBy' | 'computedHashes'>),
     receipts: Array.isArray(receipts) ? receipts : [],
-    ...(credentials !== undefined ? { credentials } : {}),
+    ...(credentials !== undefined ? { credentials: { ...credentials } } : {}),
     ...(sha256 ? { resource: photoResourceUri(sha256) } : {}),
     ...(res.meta ? { meta: res.meta } : {}),
   };
@@ -168,26 +168,22 @@ export function toEnrichEnvelope(
   res: EnrichResponse,
   opts: { keepBytes: boolean; savedTo?: string },
 ): EnrichPhotoOutput {
-  const extra = res as EnrichResponse & {
-    mode?: 'file' | 'sidecar';
-    sidecar?: { xmp: string };
-    registryId?: string;
-    credentials?: unknown;
-    reason?: string;
-  };
   const hasBytes = typeof res.imageBase64 === 'string' && res.imageBase64 !== '';
   const creditsCharged = res.meta?.creditsCharged ?? 0;
   return {
-    mode: extra.mode ?? (hasBytes ? 'file' : 'sidecar'),
+    // An API from before sidecar mode sends no `mode`; bytes mean a file write.
+    mode: res.mode ?? (hasBytes ? 'file' : 'sidecar'),
     ...(opts.savedTo ? { savedTo: opts.savedTo } : {}),
     ...(hasBytes && opts.keepBytes ? { imageBase64: res.imageBase64 } : {}),
-    ...(extra.sidecar !== undefined ? { sidecar: extra.sidecar } : {}),
+    ...(res.sidecar !== undefined ? { sidecar: res.sidecar } : {}),
     formatsWritten: res.formatsWritten,
     lensVersions: res.lensVersions,
     sha256: res.sha256,
-    ...(extra.registryId !== undefined ? { registryId: extra.registryId } : {}),
-    ...(extra.credentials !== undefined ? { credentials: extra.credentials } : {}),
-    ...(extra.reason !== undefined ? { reason: extra.reason } : {}),
+    ...(res.registryId !== undefined ? { registryId: res.registryId } : {}),
+    // Spread: the SDK interface has no index signature, the open envelope object does.
+    ...(res.credentials !== undefined ? { credentials: { ...res.credentials } } : {}),
+    ...(res.reason !== undefined ? { reason: res.reason } : {}),
+    ...(res.warnings?.length ? { warnings: [...res.warnings] } : {}),
     usage: { creditsCharged, usd: { charged: usdFromCredits(creditsCharged) } },
     ...(res.meta ? { meta: res.meta } : {}),
   };

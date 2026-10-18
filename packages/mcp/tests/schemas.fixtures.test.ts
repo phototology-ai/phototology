@@ -306,7 +306,19 @@ describe('the other envelopes accept representative results', () => {
     for (const v of [
       { ...base, mode: 'file', savedTo: '/tmp/out.jpg' },
       { ...base, mode: 'file', imageBase64: 'AAAA' },
-      { ...base, mode: 'sidecar', sidecarSavedTo: '/tmp/in.jpg.xmp', reason: 'valid Content Credential', credentials: {} },
+      { ...base, mode: 'sidecar', sidecarSavedTo: '/tmp/in.jpg.xmp', reason: 'valid Content Credential', credentials: { status: 'valid' } },
+      {
+        ...base,
+        mode: 'sidecar',
+        sidecar: { xmp: '<x:xmpmeta/>' },
+        warnings: ['CREDENTIALS_UNREAD'],
+        note: 'The photo was left untouched.',
+        credentials: {
+          status: 'valid', aiGenerated: false, signer: { name: 'Example Camera', issuer: 'Example CA' },
+          captureDevice: null, signedAt: '2026-10-01T00:00:00Z', trustList: null, assertions: ['c2pa.actions'],
+          note: 'Missing credentials mean no provenance was attached, not that the image is fake.',
+        },
+      },
       { ...base, mode: 'sidecar', sidecar: { xmp: '<x:xmpmeta/>' }, registryId: 'r1' },
     ]) {
       const r = EnrichPhotoOutputSchema.safeParse(v);

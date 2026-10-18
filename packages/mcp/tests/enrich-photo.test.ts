@@ -11,6 +11,7 @@
  */
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -31,8 +32,21 @@ const { registerEnrichPhoto } = require('../src/tools/enrich-photo');
 const ENRICHED_BYTES = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0xaa, 0xbb]);
 const ENRICHED_B64 = ENRICHED_BYTES.toString('base64');
 
+const NO_CREDENTIAL = {
+  status: 'none',
+  aiGenerated: null,
+  signer: null,
+  captureDevice: null,
+  signedAt: null,
+  trustList: null,
+  assertions: [],
+  note: 'test note',
+};
+
 const FAKE_ENRICH_RESPONSE = {
   object: 'enrichment',
+  mode: 'file',
+  credentials: NO_CREDENTIAL,
   imageBase64: ENRICHED_B64,
   formatsWritten: ['xmp'],
   lensVersions: { dating: '1.0' },
@@ -76,6 +90,7 @@ describe('enrich_photo input modes', () => {
     expect(client.enrich).toHaveBeenCalledWith({
       imageUrl: 'https://example.com/p.jpg',
       formats: ['xmp'],
+      preserveCredentials: true,
     });
   });
 
@@ -87,6 +102,7 @@ describe('enrich_photo input modes', () => {
     expect(client.enrich).toHaveBeenCalledWith({
       imageBase64: b64,
       formats: ['exif', 'iptc', 'xmp'],
+      preserveCredentials: true,
     });
   });
 
@@ -653,6 +669,277 @@ describe('enrich_photo without an allow-list still resolves ..', () => {
   });
 });
 
+describe('enrich_photo sidecar mode (the photo carries a valid content credential)', () => {
+  const XMP_PACKET = '<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF/></x:xmpmeta>';
+  const VALID_CREDENTIAL = {
+    ...NO_CREDENTIAL,
+    status: 'valid',
+    signer: { name: 'Example Camera', issuer: 'Example CA' },
+    signedAt: '2026-10-01T00:00:00Z',
+    assertions: ['c2pa.actions'],
+  };
+  const REASON = 'Writing into the file would invalidate its Content Credential.';
+  const BROKE_SENTENCE = "This write broke the photo's content credential because breakCredentials was true.";
+  const UNREAD_SENTENCE = "The photo's content credential could not be read in time, so this copy was written without checking for one. If the photo carries a content credential, this copy does not keep it.";
+  const SIDECAR_RESPONSE = {
+    object: 'enrichment',
+    mode: 'sidecar',
+    sidecar: { xmp: XMP_PACKET },
+    reason: REASON,
+    formatsWritten: ['xmp'],
+    credentials: VALID_CREDENTIAL,
+    lensVersions: { dating: '1.0' },
+    sha256: 'deadbeef'.repeat(8),
+    meta: { requestId: 'req_sidecar', processingTimeMs: 50, creditsCharged: 5, ai_generated: true },
+  };
+  const sha = (b: Buffer) => createHash('sha256').update(b).digest('hex');
+  let tmpDir: string;
+  let inPath: string;
+
+  beforeEach(() => {
+    tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-enrich-sidecar-')));
+    inPath = path.join(tmpDir, 'signed.jpg');
+    fs.writeFileSync(inPath, JPEG_BYTES);
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function sidecarClient(): any {
+    return makeMockClient({ enrich: jest.fn().mockResolvedValue(SIDECAR_RESPONSE) });
+  }
+
+  it('writes <imagePath>.xmp beside the original and leaves the original byte-identical', async () => {
+    const before = sha(fs.readFileSync(inPath));
+    const handler = captureHandler(sidecarClient());
+    const result = await handler({ imagePath: inPath });
+    expect(result.isError).toBeFalsy();
+    expect(fs.readFileSync(`${inPath}.xmp`, 'utf8')).toBe(XMP_PACKET);
+    expect(sha(fs.readFileSync(inPath))).toBe(before);
+    const payload = JSON.parse(result.content[0].text);
+    expect(payload).toEqual(expect.objectContaining({
+      mode: 'sidecar',
+      sidecarSavedTo: `${inPath}.xmp`,
+      formatsWritten: ['xmp'],
+      sha256: 'deadbeef'.repeat(8),
+      credentials: VALID_CREDENTIAL,
+      reason: REASON,
+      usage: { creditsCharged: 5, usd: { charged: '0.05' } },
+    }));
+    // The saved result is the typed envelope, without the packet repeated inline.
+    expect(EnrichPhotoOutputSchema.parse(result.structuredContent).sidecarSavedTo).toBe(`${inPath}.xmp`);
+    expect(result.structuredContent.sidecar).toBeUndefined();
+    expect(result.content.filter((c: any) => c.type === 'image')).toHaveLength(0);
+    expect(payload.note).toMatch(/left untouched/);
+    expect(payload.note).toMatch(/content credential/);
+    expect(payload.imageBase64).toBeUndefined();
+    expect(payload.sidecar).toBeUndefined();
+  });
+
+  it('writes the sidecar, not the outputPath copy, when outputPath is also given', async () => {
+    const outPath = path.join(tmpDir, 'copy.jpg');
+    const handler = captureHandler(sidecarClient());
+    const result = await handler({ imagePath: inPath, outputPath: outPath });
+    expect(result.isError).toBeFalsy();
+    expect(fs.existsSync(outPath)).toBe(false);
+    expect(fs.readFileSync(`${inPath}.xmp`, 'utf8')).toBe(XMP_PACKET);
+    const payload = JSON.parse(result.content[0].text);
+    expect(payload.sidecarSavedTo).toBe(`${inPath}.xmp`);
+    expect(payload.savedTo).toBeUndefined();
+    expect(payload.note).toContain(outPath);
+  });
+
+  it('returns the packet as sidecar.xmp when there is no local path, writing nothing', async () => {
+    const handler = captureHandler(sidecarClient());
+    const result = await handler({ imageUrl: 'https://example.com/signed.jpg' });
+    expect(result.isError).toBeFalsy();
+    const payload = JSON.parse(result.content[0].text);
+    expect(payload.sidecar).toEqual({ xmp: XMP_PACKET });
+    expect(payload.mode).toBe('sidecar');
+    expect(payload.reason).toBe(REASON);
+    expect(payload.credentials).toEqual(VALID_CREDENTIAL);
+    expect(payload.note).toMatch(/left untouched/);
+    expect(payload.sidecarSavedTo).toBeUndefined();
+    expect(result.structuredContent.sidecar).toEqual({ xmp: XMP_PACKET });
+    expect(EnrichPhotoOutputSchema.parse(result.structuredContent).mode).toBe('sidecar');
+    expect(fs.readdirSync(tmpDir)).toEqual(['signed.jpg']);
+  });
+
+  it('goes ahead with an existing <imagePath>.xmp, and on a sidecar answer leaves it alone and returns the packet inline', async () => {
+    fs.writeFileSync(`${inPath}.xmp`, 'keep me');
+    const before = sha(fs.readFileSync(inPath));
+    const client = sidecarClient();
+    const handler = captureHandler(client);
+    const result = await handler({ imagePath: inPath });
+    expect(client.enrich).toHaveBeenCalledTimes(1);
+    expect(result.isError).toBe(true);
+    const payload = JSON.parse(result.content[0].text);
+    expect(payload.error.code).toBe('OUTPUT_EXISTS');
+    expect(payload.error.path).toBe(`${inPath}.xmp`);
+    expect(payload.error.message).toContain(`sidecar path ${inPath}.xmp already exists`);
+    expect(payload.error.message).toContain('overwrite: true');
+    expect(payload.error.message).not.toContain('outputPath');
+    expect(payload.error.message).not.toMatch(/created by something else/);
+    expect(payload.sidecar).toEqual({ xmp: XMP_PACKET });
+    expect(payload.usage.creditsCharged).toBe(5);
+    expect(payload.mode).toBe('sidecar');
+    expect(result.structuredContent.sidecar).toEqual({ xmp: XMP_PACKET });
+    expect(fs.readFileSync(`${inPath}.xmp`, 'utf8')).toBe('keep me');
+    expect(sha(fs.readFileSync(inPath))).toBe(before);
+  });
+
+  it('enriches a photo without a credential in file mode even when <imagePath>.xmp exists, and leaves the .xmp untouched', async () => {
+    // darktable and digiKam write photo.jpg.xmp beside every photo they touch.
+    const photo = path.join(tmpDir, 'photo.jpg');
+    fs.writeFileSync(photo, JPEG_BYTES);
+    fs.writeFileSync(`${photo}.xmp`, 'darktable edits');
+    const client = makeMockClient();
+    const handler = captureHandler(client);
+    const outPath = path.join(tmpDir, 'photo-enriched.jpg');
+    const result = await handler({ imagePath: photo, outputPath: outPath });
+    expect(result.isError).toBeFalsy();
+    expect(client.enrich).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(result.content[0].text).savedTo).toBe(outPath);
+    expect(fs.readFileSync(outPath)).toEqual(ENRICHED_BYTES);
+    expect(fs.readFileSync(`${photo}.xmp`, 'utf8')).toBe('darktable edits');
+  });
+
+  it('refuses a symlink at <imagePath>.xmp before spending credits, with or without overwrite', async () => {
+    const victim = path.join(tmpDir, 'victim.txt');
+    fs.writeFileSync(victim, 'keep me');
+    fs.symlinkSync(victim, `${inPath}.xmp`);
+    const client = sidecarClient();
+    const handler = captureHandler(client);
+    const result = await handler({ imagePath: inPath });
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text).error.code).toBe('OUTPUT_IS_SYMLINK');
+    expect(client.enrich).not.toHaveBeenCalled();
+    expect(fs.readFileSync(victim, 'utf8')).toBe('keep me');
+  });
+
+  it('skips the sidecar pre-check with breakCredentials: true, since no sidecar can come back', async () => {
+    fs.writeFileSync(`${inPath}.xmp`, 'keep me');
+    const client = makeMockClient();
+    const handler = captureHandler(client);
+    const result = await handler({ imageUrl: undefined, imagePath: inPath, breakCredentials: true });
+    expect(result.isError).toBeFalsy();
+    expect(client.enrich).toHaveBeenCalledTimes(1);
+    expect(fs.readFileSync(`${inPath}.xmp`, 'utf8')).toBe('keep me');
+  });
+
+  it('a sidecar created during the call is kept, and the paid packet comes back in text and structuredContent', async () => {
+    const enrich = jest.fn().mockImplementation(async () => {
+      fs.writeFileSync(`${inPath}.xmp`, 'arrived first');
+      return SIDECAR_RESPONSE;
+    });
+    const handler = captureHandler(makeMockClient({ enrich }));
+    const result = await handler({ imagePath: inPath });
+    expect(result.isError).toBe(true);
+    const payload = JSON.parse(result.content[0].text);
+    expect(payload.error.code).toBe('OUTPUT_EXISTS');
+    expect(payload.error.path).toBe(`${inPath}.xmp`);
+    expect(payload.error.message).toContain(`sidecar path ${inPath}.xmp`);
+    expect(payload.error.message).not.toContain('outputPath');
+    expect(payload.sidecar).toEqual({ xmp: XMP_PACKET });
+    expect(payload.usage.creditsCharged).toBe(5);
+    expect(result.structuredContent.sidecar).toEqual({ xmp: XMP_PACKET });
+    expect(fs.readFileSync(`${inPath}.xmp`, 'utf8')).toBe('arrived first');
+  });
+
+  it('replaces an existing <imagePath>.xmp with overwrite: true', async () => {
+    fs.writeFileSync(`${inPath}.xmp`, 'replace me');
+    const handler = captureHandler(sidecarClient());
+    const result = await handler({ imagePath: inPath, overwrite: true });
+    expect(result.isError).toBeFalsy();
+    expect(fs.readFileSync(`${inPath}.xmp`, 'utf8')).toBe(XMP_PACKET);
+  });
+
+  it('never writes the sidecar through a symlink at <imagePath>.xmp', async () => {
+    const victim = path.join(tmpDir, 'victim.txt');
+    fs.writeFileSync(victim, 'keep me');
+    fs.symlinkSync(victim, `${inPath}.xmp`);
+    const client = sidecarClient();
+    const handler = captureHandler(client);
+    const result = await handler({ imagePath: inPath, overwrite: true });
+    expect(result.isError).toBe(true);
+    const error = JSON.parse(result.content[0].text).error;
+    expect(error.code).toBe('OUTPUT_IS_SYMLINK');
+    expect(error.message).toContain(`sidecar path ${inPath}.xmp`);
+    expect(error.message).not.toContain('outputPath');
+    expect(client.enrich).not.toHaveBeenCalled();
+    expect(fs.readFileSync(victim, 'utf8')).toBe('keep me');
+  });
+
+  it('always sends preserveCredentials: true by default and false with breakCredentials: true', async () => {
+    const client = makeMockClient();
+    const handler = captureHandler(client);
+    await handler({ imageUrl: 'https://example.com/p.jpg' });
+    await handler({ imageUrl: 'https://example.com/p.jpg', breakCredentials: true });
+    await handler({ imageUrl: 'https://example.com/p.jpg', breakCredentials: false });
+    const sent = client.enrich.mock.calls.map((c: any[]) => c[0]);
+    for (const req of sent) expect(req).toHaveProperty('preserveCredentials');
+    expect(sent.map((r: any) => r.preserveCredentials)).toEqual([true, false, true]);
+  });
+
+  it('says the credential could not be read in time when the API warns CREDENTIALS_UNREAD, saved or inline', async () => {
+    const unread = { ...FAKE_ENRICH_RESPONSE, credentials: { ...NO_CREDENTIAL, status: 'unread' }, warnings: ['CREDENTIALS_UNREAD'] };
+    const enrich = jest.fn().mockResolvedValue(unread);
+    const handler = captureHandler(makeMockClient({ enrich }));
+    const outPath = path.join(tmpDir, 'copy.jpg');
+    const saved = JSON.parse((await handler({ imagePath: inPath, outputPath: outPath })).content[0].text);
+    expect(saved.warnings).toEqual(['CREDENTIALS_UNREAD', expect.stringContaining('No preview')]);
+    expect(saved.note).toBe(UNREAD_SENTENCE);
+    const inline = JSON.parse((await handler({ imageUrl: 'https://example.com/p.jpg' })).content[0].text);
+    expect(inline.warnings).toEqual(['CREDENTIALS_UNREAD', expect.stringContaining('No preview')]);
+    expect(inline.note).toBe(UNREAD_SENTENCE);
+    expect(UNREAD_SENTENCE).not.toMatch(/\u2014|immutable|authentic|authenticated|sealed/i);
+  });
+
+  it('passes the CREDENTIAL_INVALIDATED warning and credentials through on a saved copy', async () => {
+    const enrich = jest.fn().mockResolvedValue({
+      ...FAKE_ENRICH_RESPONSE,
+      credentials: VALID_CREDENTIAL,
+      warnings: ['CREDENTIAL_INVALIDATED'],
+    });
+    const handler = captureHandler(makeMockClient({ enrich }));
+    const outPath = path.join(tmpDir, 'copy.jpg');
+    const result = await handler({ imagePath: inPath, outputPath: outPath, breakCredentials: true });
+    expect(result.isError).toBeFalsy();
+    const payload = JSON.parse(result.content[0].text);
+    expect(payload.savedTo).toBe(outPath);
+    expect(payload.warnings).toEqual(['CREDENTIAL_INVALIDATED', expect.stringContaining('No preview')]);
+    expect(payload.credentials).toEqual(VALID_CREDENTIAL);
+    expect(payload.note).toBe(BROKE_SENTENCE);
+  });
+
+  it('says the write broke the credential on an inline copy too, and says nothing when no warning came back', async () => {
+    const enrich = jest.fn()
+      .mockResolvedValueOnce({ ...FAKE_ENRICH_RESPONSE, credentials: VALID_CREDENTIAL, warnings: ['CREDENTIAL_INVALIDATED'] })
+      .mockResolvedValueOnce(FAKE_ENRICH_RESPONSE);
+    const handler = captureHandler(makeMockClient({ enrich }));
+    const broke = JSON.parse((await handler({ imageUrl: 'https://example.com/p.jpg', breakCredentials: true })).content[0].text);
+    expect(broke.note).toBe(BROKE_SENTENCE);
+    expect(broke.imageBase64).toBe(ENRICHED_B64);
+    const plain = JSON.parse((await handler({ imageUrl: 'https://example.com/p.jpg' })).content[0].text);
+    expect(plain.note).toBeUndefined();
+  });
+
+  it('describes breakCredentials and the sidecar in plain words', () => {
+    const server = new McpServer({ name: 'test', version: '0.0.1' });
+    const spy = jest.spyOn(server, 'registerTool');
+    registerEnrichPhoto(server, makeMockClient());
+    const config: any = spy.mock.calls.find((c) => c[0] === 'enrich_photo')![1];
+    expect(config.inputSchema.breakCredentials.description).toContain(
+      'Pass true only if the user accepts that the written copy loses its content credential. By default the analysis goes into a sidecar file next to the photo and the photo is left untouched.',
+    );
+    expect(config.description).toContain('writing the analysis into the file would break its content credential');
+    expect(config.description).toContain('.xmp');
+    const text = [config.description, ...Object.values(config.inputSchema).map((s: any) => s.description ?? '')].join('\n');
+    expect(text).not.toMatch(/\u2014|immutable|authentic|authenticated|sealed/i);
+  });
+});
+
 // A real JPEG, so the preview path can decode the enriched bytes.
 let REAL_JPEG: Buffer;
 beforeAll(async () => {
@@ -666,7 +953,7 @@ function realResponse(extra: Record<string, unknown> = {}): Record<string, unkno
 }
 
 /** What the API returns when writing into the file would break its Content Credential (spec 8.4). */
-const SIDECAR_RESPONSE = {
+const MINIMAL_SIDECAR_RESPONSE = {
   object: 'enrichment',
   mode: 'sidecar',
   sidecar: { xmp: '<x:xmpmeta xmlns:x="adobe:ns:meta/"></x:xmpmeta>' },
@@ -757,7 +1044,7 @@ describe('enrich_photo typed result', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-enrich-side-'));
     try {
       const outPath = path.join(tmp, 'out.jpg');
-      const client = makeMockClient({ enrich: jest.fn().mockResolvedValue(SIDECAR_RESPONSE) });
+      const client = makeMockClient({ enrich: jest.fn().mockResolvedValue(MINIMAL_SIDECAR_RESPONSE) });
       const result = await captureHandler(client)({ imageUrl: 'https://example.com/p.jpg', outputPath: outPath });
       expect(result.isError).toBeFalsy();
       expect(imageBlocks(result)).toHaveLength(0);

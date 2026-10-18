@@ -194,14 +194,16 @@ export interface ReceiptLens {
 }
 
 /**
- * Content Credentials report. Until credentials are read, the API returns
- * `{ status: 'unread', note }`. `status` is a plain string so later states
- * extend it without a breaking change.
+ * What a receipt records about the photo's incoming Content Credentials: the
+ * status, and (on receipts issued since credentials are read) whether the
+ * manifest declares an AI source, the signer and the trust list. Receipts
+ * issued before that carry `{ status: 'unread' }` only.
  */
-export interface CredentialsReport {
-  status: string;
-  note?: string;
-  [key: string]: unknown;
+export interface ReceiptCredentials {
+  status: CredentialsReport['status'];
+  aiGenerated?: CredentialsReport['aiGenerated'];
+  signer?: CredentialsReport['signer'];
+  trustList?: CredentialsReport['trustList'];
 }
 
 /**
@@ -226,7 +228,7 @@ export interface ReceiptPayload {
     analyzedAt: string;
   };
   firstSeenAt: string;
-  credentials: CredentialsReport;
+  credentials: ReceiptCredentials;
   registry: { url: string };
 }
 
@@ -586,15 +588,57 @@ export interface EnrichRequest {
   imageBase64?: string;
   /** Which metadata blocks to write. At least one required. */
   formats: ('exif' | 'iptc' | 'xmp')[];
+  /**
+   * Keep the photo's content credential intact. Defaults to `true`, and the
+   * SDK always sends it: when the photo carries a valid or trusted credential,
+   * the API returns an XMP sidecar (`mode: 'sidecar'`) instead of writing into
+   * the file. `false` writes into the file anyway and the response warns
+   * `CREDENTIAL_INVALIDATED`.
+   */
+  preserveCredentials?: boolean;
+}
+
+/** Incoming content credentials the API read from the input photo. */
+export interface CredentialsReport {
+  status: 'none' | 'invalid' | 'valid' | 'trusted' | 'unread';
+  /** True when the manifest declares a trained-model source; null when no manifest was read. */
+  aiGenerated: boolean | null;
+  signer: { name: string; issuer: string } | null;
+  captureDevice: string | null;
+  signedAt: string | null;
+  /** Which trust list the signer chains to; null unless `status` is `trusted`. */
+  trustList: 'c2pa' | 'legacy' | null;
+  assertions: string[];
+  note: string;
 }
 
 /** Response from POST /v2/enrich. */
 export interface EnrichResponse {
   object: 'enrichment';
-  /** Enriched photo bytes, base64-encoded. */
-  imageBase64: string;
-  /** Which formats were actually written (subset of requested). */
+  /**
+   * `file`: the metadata was written into the image, returned as `imageBase64`.
+   * `sidecar`: the photo carries a valid or trusted content credential that a
+   * write would break, so the metadata comes back as an XMP packet in
+   * `sidecar.xmp` and the image is left untouched. Billed the same either way.
+   */
+  mode: 'file' | 'sidecar';
+  /** Enriched photo bytes, base64-encoded. `mode: 'file'` only. */
+  imageBase64?: string;
+  /** The XMP sidecar packet, `mode: 'sidecar'` only. Save it beside the original as `<file>.xmp`. */
+  sidecar?: { xmp: string };
+  /** Which formats were actually written (subset of requested; `['xmp']` for a sidecar). */
   formatsWritten: ('exif' | 'iptc' | 'xmp')[];
+  /** Why a sidecar was returned, `mode: 'sidecar'` only. */
+  reason?: string;
+  /**
+   * `CREDENTIAL_INVALIDATED` when the in-file write went over a valid or trusted
+   * credential (`preserveCredentials: false`). `CREDENTIALS_UNREAD` when the
+   * API's credential reader is on but could not read the photo in time, so the
+   * copy was written without knowing whether it carried a credential.
+   */
+  warnings?: string[];
+  /** Incoming content credentials read from the input. */
+  credentials: CredentialsReport;
   /** Map of lens name → version that was embedded. */
   lensVersions: Record<string, string>;
   /** SHA-256 of the ORIGINAL (input) bytes. Enriched bytes hash differently. */

@@ -1,8 +1,10 @@
 /**
  * Hand-written envelopes for every MCP tool's `structuredContent`.
  *
- * Shapes follow spec §10.1 of the MCP gold-standard design. `receipts` and
- * `credentials` are deliberately loose here; a later row tightens them.
+ * Shapes follow spec §10.1 of the MCP gold-standard design. `receipts` stay
+ * loose (the SDK verifies them); `credentials` is the API's Content
+ * Credentials report, every field but `status` optional so an older API's
+ * report still validates (the SDK's `CredentialsReport` has the exact types).
  * Dollar amounts are strings with two decimals ("0.05"), credits are numbers.
  */
 import { z } from 'zod';
@@ -30,7 +32,18 @@ export const UsageSchema = z.looseObject({
 export type Usage = z.infer<typeof UsageSchema>;
 
 const Receipts = z.array(z.unknown());
-const Credentials = z.unknown().optional();
+export const CredentialsSchema = z.looseObject({
+  // A string, not the enum: a status added by a newer API must not fail the tool.
+  status: z.string(),
+  aiGenerated: z.boolean().nullable().optional(),
+  signer: z.looseObject({ name: z.string(), issuer: z.string() }).nullable().optional(),
+  captureDevice: z.string().nullable().optional(),
+  signedAt: z.string().nullable().optional(),
+  trustList: z.string().nullable().optional(),
+  assertions: z.array(z.string()).optional(),
+  note: z.string().optional(),
+});
+const Credentials = CredentialsSchema.optional();
 
 export const AnalyzePhotoOutputSchema = z.looseObject({
   photo: PhotoIdentitySchema,
@@ -204,8 +217,14 @@ export const EnrichPhotoOutputSchema = z.looseObject({
   sha256: z.string(),
   registryId: z.string().optional(),
   credentials: Credentials,
+  /** Why a sidecar came back, `mode: 'sidecar'` only. */
   reason: z.string().optional(),
+  /** API warnings (`CREDENTIAL_INVALIDATED`, `CREDENTIALS_UNREAD`) plus a missing-preview line. */
+  warnings: z.array(z.string()).optional(),
+  /** Plain-words note: why the photo was left untouched, or what a copy lost. */
+  note: z.string().optional(),
   usage: z.looseObject({ creditsCharged: z.number(), usd: z.looseObject({ charged: Usd }) }),
+  meta: z.looseObject({}).optional(),
   /** The real file read, present only when a local path went through a symlinked folder. */
   resolvedPath: z.string().optional(),
 });

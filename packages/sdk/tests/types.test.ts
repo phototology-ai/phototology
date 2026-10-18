@@ -5,6 +5,8 @@ import type {
   VehicleOutput,
   ModulesResponse,
   ErrorResponse,
+  EnrichRequest,
+  EnrichResponse,
 } from '../src/types';
 
 describe('types', () => {
@@ -172,6 +174,37 @@ describe('types', () => {
         ],
       };
       expect(resp.modules[0].name).toBe('dating');
+    });
+  });
+
+  describe('Enrich sidecar mode', () => {
+    it('types preserveCredentials on the request and mode, sidecar, reason, credentials, warnings on the response', () => {
+      const req: EnrichRequest = { imageUrl: 'https://example.com/p.jpg', formats: ['xmp'], preserveCredentials: false };
+      const resp: EnrichResponse = {
+        object: 'enrichment',
+        mode: 'file',
+        imageBase64: 'AAAA',
+        formatsWritten: ['xmp'],
+        warnings: ['CREDENTIAL_INVALIDATED'],
+        credentials: {
+          status: 'trusted',
+          aiGenerated: false,
+          signer: { name: 'Example Camera', issuer: 'Example CA' },
+          captureDevice: 'Example Camera',
+          signedAt: '2026-10-01T00:00:00Z',
+          trustList: 'c2pa',
+          assertions: ['c2pa.actions'],
+          note: 'test note',
+        },
+        lensVersions: {},
+        sha256: 'ab',
+        meta: { requestId: 'r', processingTimeMs: 1, creditsCharged: 5, ai_generated: true },
+      };
+      expect(req.preserveCredentials).toBe(false);
+      expect(resp.mode).toBe('file');
+      expect(resp.credentials.trustList).toBe('c2pa');
+      expect(resp.sidecar).toBeUndefined();
+      expect(resp.reason).toBeUndefined();
     });
   });
 });

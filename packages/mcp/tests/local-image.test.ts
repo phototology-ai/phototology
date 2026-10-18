@@ -12,6 +12,7 @@ import {
   resolveReal,
   assertInsideAllowedDirs,
   writeOutputFile,
+  assertWritableOutput,
 } from '../src/lib/local-image';
 
 describe('resolvePath', () => {
@@ -522,5 +523,88 @@ describe('writeOutputFile', () => {
       expect(caught?.code).toBe(overwrite ? 'OUTPUT_IS_SYMLINK' : 'OUTPUT_EXISTS');
       expect(fs.existsSync(target)).toBe(false);
     }
+  });
+});
+
+describe('write refusals name the path by its label', () => {
+  const ENV = 'PHOTOTOLOGY_MCP_ALLOWED_DIRS';
+  let base: string;
+  let savedEnv: string | undefined;
+
+  beforeEach(() => {
+    savedEnv = process.env[ENV];
+    delete process.env[ENV];
+    base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-label-')));
+    fs.mkdirSync(path.join(base, 'in'));
+    fs.mkdirSync(path.join(base, 'other'));
+  });
+
+  afterEach(() => {
+    if (savedEnv === undefined) delete process.env[ENV];
+    else process.env[ENV] = savedEnv;
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+
+  function refusal(fn: () => unknown): LocalImageError {
+    try {
+      fn();
+    } catch (err) {
+      return err as LocalImageError;
+    }
+    throw new Error('expected a refusal');
+  }
+
+  test('an existing sidecar names the sidecar path and says to pass overwrite: true', () => {
+    const xmp = path.join(base, 'in', 'p.jpg.xmp');
+    fs.writeFileSync(xmp, 'old');
+    const err = refusal(() => assertWritableOutput(undefined, xmp, false, 'sidecar path'));
+    expect(err.code).toBe('OUTPUT_EXISTS');
+    expect(err.message).toBe(`sidecar path ${xmp} already exists. Pass overwrite: true to replace it.`);
+  });
+
+  test('a symlink at the sidecar path names the sidecar path', () => {
+    const xmp = path.join(base, 'in', 'p.jpg.xmp');
+    fs.symlinkSync(path.join(base, 'other', 'victim'), xmp);
+    const err = refusal(() => assertWritableOutput(undefined, xmp, true, 'sidecar path'));
+    expect(err.code).toBe('OUTPUT_IS_SYMLINK');
+    expect(err.message).toContain(`sidecar path ${xmp} is a symbolic link`);
+    expect(err.message).not.toContain('outputPath');
+  });
+
+  test('a sidecar path outside the allowed folders names that path, never outputPath', () => {
+    process.env[ENV] = path.join(base, 'in');
+    const xmp = path.join(base, 'other', 'p.jpg.xmp');
+    const err = refusal(() => assertWritableOutput(undefined, xmp, false, 'sidecar path'));
+    expect(err.code).toBe('PATH_OUTSIDE_ALLOWED_DIRS');
+    expect(err.message).toContain(xmp);
+    expect(err.message).not.toContain('outputPath');
+  });
+
+  test('a missing sidecar folder names the sidecar path', () => {
+    const err = refusal(() => assertWritableOutput(undefined, path.join(base, 'nope', 'p.jpg.xmp'), false, 'sidecar path'));
+    expect(err.code).toBe('FILE_NOT_FOUND');
+    expect(err.message).toContain('sidecar path directory does not exist');
+  });
+
+  test('writeOutputFile races name the sidecar path too', () => {
+    const xmp = path.join(base, 'in', 'race.xmp');
+    fs.writeFileSync(xmp, 'arrived first');
+    const exists = refusal(() => writeOutputFile(xmp, Buffer.from('x'), false, 'sidecar path'));
+    expect(exists.code).toBe('OUTPUT_EXISTS');
+    expect(exists.message).toContain(`sidecar path ${xmp} was created by something else`);
+    expect(exists.message).toContain('Pass overwrite: true');
+    expect(exists.message).not.toContain('outputPath');
+    const link = path.join(base, 'in', 'link.xmp');
+    fs.symlinkSync(path.join(base, 'other', 'victim'), link);
+    const linked = refusal(() => writeOutputFile(link, Buffer.from('x'), true, 'sidecar path'));
+    expect(linked.code).toBe('OUTPUT_IS_SYMLINK');
+    expect(linked.message).toContain(`sidecar path ${link}`);
+  });
+
+  test('without a label the messages still say outputPath', () => {
+    const out = path.join(base, 'in', 'out.jpg');
+    fs.writeFileSync(out, 'old');
+    const err = refusal(() => assertWritableOutput(undefined, out, false));
+    expect(err.message).toBe(`outputPath ${out} already exists. Choose a new path, or pass overwrite: true to replace it.`);
   });
 });

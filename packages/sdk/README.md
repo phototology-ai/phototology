@@ -283,7 +283,7 @@ SIGNATURE='<receipt.signature>'
 openssl ts -verify -data <(printf '%s' "$SIGNATURE") -token_in -in token.der -CAfile tsa-roots.pem
 ```
 
-`credentials` on a receipt, an analyze result or a photo record reports the photo's Content Credentials. It reads `{ status: 'unread', note }` until reading them ships; `status` is a plain string so new states can be added.
+`credentials` on an analyze result, a lookup result or a photo record is a `CredentialsReport`: the photo's Content Credentials `status` (`none`, `invalid`, `valid`, `trusted` or `unread`), `aiGenerated`, `signer`, `captureDevice`, `signedAt`, `trustList`, `assertions` and a fixed `note`. `unread` means no read happened, and `none` means the photo carries no credentials, which is not evidence of fakery. A receipt's `payload.credentials` (`ReceiptCredentials`) records `status`, `aiGenerated`, `signer` and `trustList`; receipts issued before credentials were read carry `{ status: 'unread' }` only.
 
 ## Pricing
 

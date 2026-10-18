@@ -146,15 +146,21 @@ function isSameFile(a: string, b: string): boolean {
  * 5. Refuse a canonical path that is itself a symlink, dangling or not. Ignores overwrite: a
  *    link is never written through, since its target can sit outside every allowed folder.
  * 6. Refuse an existing output unless the caller passed overwrite.
+ * `label` names the path in refusals ('outputPath', or 'sidecar path' for enrich_photo's `<imagePath>.xmp`).
  */
-export function assertWritableOutput(inputPath: string | undefined, outputPath: string, overwrite: boolean): string {
+export function assertWritableOutput(
+  inputPath: string | undefined,
+  outputPath: string,
+  overwrite: boolean,
+  label = 'outputPath',
+): string {
   assertNoParentSegments(outputPath);
   const raw = asGiven(outputPath);
   const name = path.basename(raw);
   if (name === '' || name === '.' || name === '..' || /[\\/]$/.test(outputPath)) {
     throw new LocalImageError(
       'INVALID_OUTPUT_PATH',
-      `outputPath ${outputPath} does not end in a file name. Pass the full path of the new file, for example /folder/photo-enriched.jpg.`,
+      `${label} ${outputPath} does not end in a file name. Pass the full path of the new file, for example /folder/photo-enriched.jpg.`,
       { path: outputPath },
     );
   }
@@ -164,14 +170,14 @@ export function assertWritableOutput(inputPath: string | undefined, outputPath: 
     realDir = fs.realpathSync.native(dir);
   } catch {
     assertInsideAllowedDirs(canonicalLocation(raw), outputPath);
-    throw new LocalImageError('FILE_NOT_FOUND', `outputPath directory does not exist: ${dir}`, { path: dir });
+    throw new LocalImageError('FILE_NOT_FOUND', `${label} directory does not exist: ${dir}`, { path: dir });
   }
   const canonical = path.join(realDir, name);
   assertInsideAllowedDirs(canonical, outputPath);
   if (inputPath !== undefined && isSameFile(inputPath, canonical)) {
     throw new LocalImageError(
       'OUTPUT_IS_INPUT',
-      `outputPath ${outputPath} is the input file. enrich_photo never writes over the original; choose a different outputPath.`,
+      `${label} ${outputPath} is the input file. enrich_photo never writes over the original; choose a different ${label}.`,
       { path: outputPath },
     );
   }
@@ -181,21 +187,21 @@ export function assertWritableOutput(inputPath: string | undefined, outputPath: 
   } catch {
     existing = undefined;
   }
-  if (existing?.isSymbolicLink()) throw outputIsSymlink(outputPath);
+  if (existing?.isSymbolicLink()) throw outputIsSymlink(outputPath, label);
   if (existing && !overwrite) {
     throw new LocalImageError(
       'OUTPUT_EXISTS',
-      `outputPath ${outputPath} already exists. Choose a new path, or pass overwrite: true to replace it.`,
+      `${label} ${outputPath} already exists. ${label === 'outputPath' ? 'Choose a new path, or pass' : 'Pass'} overwrite: true to replace it.`,
       { path: outputPath },
     );
   }
   return canonical;
 }
 
-function outputIsSymlink(outputPath: string): LocalImageError {
+function outputIsSymlink(outputPath: string, label: string): LocalImageError {
   return new LocalImageError(
     'OUTPUT_IS_SYMLINK',
-    `outputPath ${outputPath} is a symbolic link. enrich_photo never writes through a link, even with overwrite: true; pass a regular file path.`,
+    `${label} ${outputPath} is a symbolic link. enrich_photo never writes through a link, even with overwrite: true; pass a regular file path.`,
     { path: outputPath },
   );
 }
@@ -205,7 +211,7 @@ function outputIsSymlink(outputPath: string): LocalImageError {
  * enrich call, and O_NOFOLLOW refuses a symlink planted at outputPath after assertWritableOutput
  * ran, so both races are closed at the open syscall rather than by the earlier pre-check.
  */
-export function writeOutputFile(outputPath: string, bytes: Buffer, overwrite: boolean): void {
+export function writeOutputFile(outputPath: string, bytes: Buffer, overwrite: boolean, label = 'outputPath'): void {
   const { O_WRONLY, O_CREAT, O_TRUNC, O_EXCL, O_NOFOLLOW } = fs.constants;
   let fd: number;
   try {
@@ -215,12 +221,12 @@ export function writeOutputFile(outputPath: string, bytes: Buffer, overwrite: bo
     if (code === 'EEXIST') {
       throw new LocalImageError(
         'OUTPUT_EXISTS',
-        `outputPath ${outputPath} was created by something else while enriching, so it was left untouched. ` +
-          'This call was already charged. Choose a new path, or pass overwrite: true to replace it.',
+        `${label} ${outputPath} was created by something else while enriching, so it was left untouched. ` +
+          `This call was already charged. ${label === 'outputPath' ? 'Choose a new path, or pass' : 'Pass'} overwrite: true to replace it.`,
         { path: outputPath },
       );
     }
-    if (code === 'ELOOP' || code === 'EMLINK') throw outputIsSymlink(outputPath);
+    if (code === 'ELOOP' || code === 'EMLINK') throw outputIsSymlink(outputPath, label);
     throw err;
   }
   try {

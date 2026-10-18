@@ -128,10 +128,21 @@ export class PhototologyClient {
    *
    * Cost: 5 credits per call. Bills regardless of cache state.
    *
+   * When the photo carries a valid or trusted content credential and
+   * `preserveCredentials` is not `false`, the response has `mode: 'sidecar'`
+   * and the metadata comes back as an XMP packet in `sidecar.xmp` instead of
+   * `imageBase64`; save it beside the original as `<file>.xmp`.
+   *
+   * `preserveCredentials` is always sent (default `true`): the API treats a
+   * request without it as a client that cannot read a sidecar.
+   *
    * c2pa signing is deferred — `formats: ['c2pa']` is rejected.
    */
   async enrich(request: EnrichRequest): Promise<EnrichResponse> {
-    const response = await this.request('POST', '/v2/enrich', request);
+    const response = await this.request('POST', '/v2/enrich', {
+      ...request,
+      preserveCredentials: request.preserveCredentials ?? true,
+    });
     return safeJson<EnrichResponse>(response);
   }
 

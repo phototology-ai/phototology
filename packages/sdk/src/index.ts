@@ -46,6 +46,7 @@ export type {
   ReceiptJwk,
   ReceiptJwks,
   CredentialsReport,
+  ReceiptCredentials,
   VerifyResponse,
   PhotoResponse,
 } from './types';

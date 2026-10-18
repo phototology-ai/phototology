@@ -10,7 +10,7 @@
 
 import { PhototologyClient } from '../src/client';
 import { CreditExhaustedError, ValidationError } from '../src/errors';
-import type { EnrichResponse } from '../src/types';
+import type { CredentialsReport, EnrichResponse } from '../src/types';
 
 const mockFetch = jest.fn() as jest.MockedFunction<typeof fetch>;
 global.fetch = mockFetch;
@@ -27,9 +27,22 @@ function mockJsonResponse(status: number, body: unknown, headers: Record<string,
 
 const TEST_KEY = 'pt_test_enrich123';
 
+const NO_CREDENTIAL: CredentialsReport = {
+  status: 'none',
+  aiGenerated: null,
+  signer: null,
+  captureDevice: null,
+  signedAt: null,
+  trustList: null,
+  assertions: [],
+  note: 'test note',
+};
+
 const FIXTURE_ENRICH: EnrichResponse = {
   object: 'enrichment',
+  mode: 'file',
   imageBase64: 'AAAA',
+  credentials: NO_CREDENTIAL,
   formatsWritten: ['xmp'],
   lensVersions: { dating: '1.0' },
   sha256: 'deadbeef'.repeat(8),
@@ -131,5 +144,38 @@ describe('PhototologyClient.enrich', () => {
     await expect(
       client.enrich({ imageBase64: 'AAAA', formats: ['xmp'] }),
     ).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it('sends preserveCredentials and returns a sidecar response as given', async () => {
+    const sidecarResponse: EnrichResponse = {
+      object: 'enrichment',
+      mode: 'sidecar',
+      sidecar: { xmp: '<x:xmpmeta/>' },
+      reason: 'Writing into the file would invalidate its Content Credential.',
+      formatsWritten: ['xmp'],
+      credentials: { ...NO_CREDENTIAL, status: 'valid' },
+      lensVersions: { dating: '1.0' },
+      sha256: 'deadbeef'.repeat(8),
+      meta: { requestId: 'req_sidecar', processingTimeMs: 7, creditsCharged: 5, ai_generated: true },
+    };
+    mockFetch.mockResolvedValueOnce(mockJsonResponse(200, sidecarResponse));
+    const client = new PhototologyClient({ apiKey: TEST_KEY });
+    const result = await client.enrich({ imageBase64: 'BBBB', formats: ['xmp'], preserveCredentials: false });
+    const body = JSON.parse(mockFetch.mock.calls[0][1]!.body as string);
+    expect(body.preserveCredentials).toBe(false);
+    expect(result.mode).toBe('sidecar');
+    expect(result.sidecar?.xmp).toBe('<x:xmpmeta/>');
+    expect(result.imageBase64).toBeUndefined();
+  });
+
+  it('always puts preserveCredentials on the wire: true when the caller leaves it out, as given otherwise', async () => {
+    const client = new PhototologyClient({ apiKey: TEST_KEY });
+    for (const given of [undefined, true, false]) {
+      mockFetch.mockResolvedValueOnce(mockJsonResponse(200, FIXTURE_ENRICH));
+      await client.enrich({ imageBase64: 'BBBB', formats: ['xmp'], ...(given === undefined ? {} : { preserveCredentials: given }) });
+    }
+    const sent = mockFetch.mock.calls.map((c) => JSON.parse((c[1] as RequestInit).body as string));
+    expect(sent.map((b) => b.preserveCredentials)).toEqual([true, true, false]);
+    for (const b of sent) expect(b).toHaveProperty('preserveCredentials');
   });
 });

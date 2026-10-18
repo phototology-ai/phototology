@@ -35,7 +35,8 @@ function payload(over: Partial<ReceiptPayload> & Pick<ReceiptPayload, 'id' | 'li
       analyzedAt: '2026-10-17T00:00:00.000Z',
     },
     firstSeenAt: '2026-10-17T00:00:00.000Z',
-    credentials: { status: 'unread' },
+    // What a receipt records with the reader off (credentialsForReceipt of the unread report).
+    credentials: { status: 'unread', aiGenerated: null, signer: null, trustList: null },
     registry: { url: 'https://api.phototology.com/v2/photos/' + 'a'.repeat(64) },
     ...over,
   };

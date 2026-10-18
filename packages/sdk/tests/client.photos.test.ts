@@ -36,7 +36,16 @@ describe('client.getPhoto', () => {
       lenses: {},
     },
     receipts: [receipt],
-    credentials: { status: 'unread', note: 'Content Credentials are not read yet.' },
+    credentials: {
+      status: 'unread',
+      aiGenerated: null,
+      signer: null,
+      captureDevice: null,
+      signedAt: null,
+      trustList: null,
+      assertions: [],
+      note: 'Missing credentials mean no provenance was attached, not that the image is fake.',
+    },
     firstSeenAt: '2026-10-17T00:00:00.000Z',
     lastAnalyzedAt: '2026-10-17T00:00:00.000Z',
   };
