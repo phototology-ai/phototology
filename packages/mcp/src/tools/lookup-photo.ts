@@ -9,6 +9,7 @@ import {
   validateBase64,
   LocalImageError,
 } from '../lib/local-image';
+import { readEmbeddedRegistryId } from '../lib/registry-id';
 import { toLookupEnvelope, photoResourceLink } from '../lib/envelope';
 import { LookupPhotoOutputSchema } from '../schemas';
 
@@ -17,8 +18,11 @@ const LookupInputSchema = {
     .describe('Publicly fetchable image URL. Server downloads and hashes it; perceptual-hash matching catches re-encodes of the same image.'),
   sha256: z.string().length(64).optional()
     .describe('SHA-256 hex digest for direct lookup. Use when you already know the hash; skips the download.'),
-  pHash: z.string().length(16).regex(/^[0-9a-f]+$/, 'pHash must be 16-char lowercase hex').optional()
-    .describe('Perceptual hash (16-char lowercase hex). Direct lookup; skips the cascade. Use when you already have a pHash from a prior call.'),
+  // Either form passes through unchanged; the API expands hex to bits.
+  pHash: z.string()
+    .regex(/^(?:[01]{64}|[0-9a-fA-F]{16})$/, 'pHash must be a 64-character bit string as returned by analyze and lookup, or 16 hex characters')
+    .optional()
+    .describe('Perceptual hash: a 64-character bit string as returned by analyze and lookup, or 16 hex characters. Direct lookup; skips the cascade. Use when you already have a pHash from a prior call.'),
   imagePath: z.string().optional()
     .describe('Absolute local-filesystem path on the machine running the MCP server. The MCP runs a transparent sha256→pHash cascade: cheap exact-bytes match first, then on miss falls through to perceptually-similar match via server-side pHash. Both calls are free. NOT for paths inside an agent sandbox (e.g. Claude\'s /mnt/user-data/uploads/...); that sandbox is invisible to a locally-installed MCP; use imageBase64 or imageUrl for those. Accepts absolute (/Users/...) or ~/-prefixed paths; relative paths are rejected.'),
   imageBase64: z.string().optional()
@@ -69,7 +73,7 @@ export function registerLookupPhoto(server: McpServer, client: PhototologyClient
         '',
         'Input: exactly one of `imageUrl` (server fetches and hashes), `sha256` (direct hash lookup), `pHash` (direct perceptual-hash lookup), `imagePath` (local file, cascade), or `imageBase64` (in-memory bytes, cascade). When passing a URL or local file, perceptual-hash matching also catches re-encodes and re-uploads of the same image.',
         '',
-        'Returns `{ matchType, photo?, hammingDistance?, pdqDistance?, computedHashes?, receipts, credentials?, resource? }` for the one image asked about. `matchType` is `exact` (same file bytes), `pixels` (same decoded pixels in a different file), `pdq` (a PDQ perceptual match, with `pdqDistance`), `fuzzy` (a pHash perceptual match, with `hammingDistance`) or `none`. On anything but `exact`, `photo` is the registry record that matched, not the submitted image. On a match, `photo.lenses` maps each lens name to its last-cached output, and `resource` (also sent as a resource link) reads this registry record later for free. On `none` the photo has never been analyzed on this account: there is no `photo` and no `resource`, and `analyze_photo` is the next step.',
+        'Returns `{ matchType, photo?, hammingDistance?, pdqDistance?, matchedBy?, computedHashes?, receipts, credentials?, resource? }` for the one image asked about. `matchType` is `exact` (same file bytes), `pixels` (same decoded pixels in a different file), `pdq` (a PDQ perceptual match, with `pdqDistance`), `fuzzy` (a pHash perceptual match, with `hammingDistance`) or `none`. On anything but `exact`, `photo` is the registry record that matched, not the submitted image. On a match, `photo.lenses` maps each lens name to its last-cached output, and `resource` (also sent as a resource link) reads this registry record later for free. On `none` the photo has never been analyzed on this account: there is no `photo` and no `resource`, and `analyze_photo` is the next step. A local file that Phototology enriched carries its registry id in XMP; it is tried first, and a hit on it says `matchedBy: \'registryId\'` (an `exact` match even if the file was edited since).',
       ].join('\n'),
       inputSchema: LookupInputSchema,
       outputSchema: LookupPhotoOutputSchema,
@@ -138,23 +142,41 @@ export function registerLookupPhoto(server: McpServer, client: PhototologyClient
           cachedBase64 = imageBase64;
         }
 
+        // Step 0: a file enriched by Phototology carries its registry id (the
+        // sha256 of its original bytes) in XMP. Try it before hashing, since
+        // the enrich changed the bytes and their own sha256 will not match.
+        // Only an exact match counts: the id is untrusted input (planted, or
+        // copied from another file). Anything else falls through to the
+        // cascade on the real bytes. A hit says `matchedBy: 'registryId'`, so
+        // an exact match on a file edited since its enrich is explainable.
+        const embeddedId = readEmbeddedRegistryId(bytes);
+        if (embeddedId) {
+          const byId = await client.lookup({ sha256: embeddedId });
+          const hit = byId.results?.[embeddedId];
+          if (hit?.matchType === 'exact') {
+            const marked = {
+              ...byId,
+              results: { [embeddedId]: { ...hit, matchedBy: 'registryId' as const } },
+            };
+            return lookupResult(marked, embeddedId, resolvedPath);
+          }
+        }
+
         const sha = computeSha256(bytes);
 
         // Step 1: cheap exact-bytes lookup via sha256. Server returns cached
         // registry record if any account ever uploaded the same bytes.
         const exact = await client.lookup({ sha256: sha });
         const exactEntry = exact.results?.[sha];
-        // Short-circuit if the sha256 lookup returned ANY hit. The API's GET path
-        // substitutes a dummy '0'.repeat(16) pHash when only sha256 is submitted
-        // (packages/phototology-api/src/v2/lookup.ts:266), so we can receive
-        // matchType 'exact' (sha256 match) OR rarely 'fuzzy' (pHash collision with
-        // near-zero phash). Either means Step 2 has nothing left to add.
+        // Short-circuit on any hit. The API's sha256-only GET runs only the
+        // exact tier (no pHash, no bytes), so it answers 'exact' or 'none'; a
+        // miss falls through to Step 2, where the pixels and PDQ tiers run.
         if (exactEntry && exactEntry.matchType !== 'none') {
           return lookupResult(exact, sha, resolvedPath);
         }
 
-        // Step 2: send image bytes so the server can compute pHash and check
-        // for perceptually-similar matches (re-encodes, resizes, recompresses).
+        // Step 2: send image bytes so the server can run the byte-based tiers:
+        // same decoded pixels, PDQ (re-encodes, rotations, flips), then pHash.
         const b64 = cachedBase64 ?? bytes.toString('base64');
         const fuzzy = await client.lookup({
           imagesBase64: [b64],

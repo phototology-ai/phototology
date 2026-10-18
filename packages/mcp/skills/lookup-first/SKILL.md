@@ -18,7 +18,7 @@ Every time the user has an image URL or sha256 AND a question about that image. 
    - If unclear, call `list_lenses` and map the user's question to lens output fields.
 
 2. **Call `lookup_photo`** with `imageUrl` (or `sha256` if known).
-   - Free. The result is `{ matchType, photo?, hammingDistance?, pdqDistance?, computedHashes?, receipts, credentials?, resource? }` for the one image.
+   - Free. The result is `{ matchType, photo?, hammingDistance?, pdqDistance?, matchedBy?, computedHashes?, receipts, credentials?, resource? }` for the one image.
    - On a match (`matchType` is `exact`, `pixels`, `pdq` or `fuzzy`), `photo.lenses` maps each cached lens name to its last output, e.g. `photo.lenses.dating.output`.
 
 3. **Check coverage.** Compare the lenses you need (step 1) against the lenses already cached (step 2).

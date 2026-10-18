@@ -150,11 +150,27 @@ export interface AnalyzeMeta {
   vendor: AnalyzeVendor;
 }
 
+/** PDQ perceptual hash (Meta, 256 bits) with its quality and dihedral variants. */
+export interface PdqFingerprint {
+  /** 64 lowercase hex characters. */
+  hash: string;
+  /** 0 to 100; matches need at least 50 on both sides. */
+  quality: number;
+  /** The 8 dihedral hashes (original, rotations, flips); the first equals `hash`. */
+  variants: string[];
+}
+
 /** Fingerprint data (when requested). */
 export interface Fingerprint {
   pHash: string;
   dHash: string;
   sha256: string;
+  /** SHA-256 of the decoded pixels: equal for files that differ only in metadata. Absent above 40 MP. */
+  pixelsSha256?: string;
+  /** PDQ hash; survives re-encodes, rotations and flips. */
+  pdq?: PdqFingerprint;
+  /** ISCC Image-Code (ISO 24138), e.g. `ISCC:EEA4GQZQTY6J5DTH`. */
+  iscc?: string;
 }
 
 /** Base response shape shared by both output schemas. */
@@ -306,7 +322,10 @@ export interface LookupRequest {
   imagesBase64?: string[];
   /** SHA-256 hash for direct lookup (GET fast path). */
   sha256?: string;
-  /** Perceptual hash for fuzzy lookup (GET fast path). */
+  /**
+   * Perceptual hash for fuzzy lookup (GET fast path): the 64-character bit
+   * string analyze and lookup return, or the same 64 bits as 16 hex characters.
+   */
   pHash?: string;
   /** Hamming distance threshold for fuzzy matching (default: 5). */
   threshold?: number;
@@ -341,11 +360,26 @@ export interface PhotoRecord {
   totalCreditsSpent: number;
   analyzeCallCount: number;
   lenses: Record<string, LensIndexEntry>;
+  /**
+   * Identity hashes; present only on photos analyzed since they were recorded.
+   * Same shape as {@link Fingerprint}: PDQ nests, `pixelsSha256` and `iscc` are flat.
+   */
+  pixelsSha256?: string;
+  pdq?: PdqFingerprint;
+  iscc?: string;
 }
 
 /** Lookup result for a single image. */
 export interface LookupResult {
-  matchType: 'exact' | 'fuzzy' | 'none';
+  /**
+   * Which tier matched, tried in this order: `exact` (same bytes), `pixels`
+   * (same decoded pixels, metadata differs), `pdq` (PDQ within 31 bits, e.g.
+   * a re-encode, rotation or flip), `fuzzy` (pHash within `threshold`).
+   */
+  matchType: 'exact' | 'pixels' | 'pdq' | 'fuzzy' | 'none';
+  /** PDQ Hamming distance; present only when `matchType` is `'pdq'`. */
+  pdqDistance?: number;
+  /** pHash Hamming distance; present only when `matchType` is `'fuzzy'`. */
   hammingDistance?: number;
   photo?: PhotoRecord;
   /**
@@ -413,6 +447,11 @@ export interface EnrichResponse {
   lensVersions: Record<string, string>;
   /** SHA-256 of the ORIGINAL (input) bytes. Enriched bytes hash differently. */
   sha256: string;
+  /**
+   * Registry id written into the file's XMP: the sha256 of the original bytes,
+   * read back by a later lookup. Present only when the write stored it.
+   */
+  registryId?: string;
   meta: {
     requestId: string;
     processingTimeMs: number;

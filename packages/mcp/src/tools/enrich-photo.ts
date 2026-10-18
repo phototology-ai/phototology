@@ -154,6 +154,8 @@ export function registerEnrichPhoto(server: McpServer, client: PhototologyClient
           }
         }
 
+        // registryId (passed through from the API, present only when the write
+        // stored it): the id in the file's XMP, which lookup_photo reads back.
         return {
           content: [
             { type: 'text' as const, text: JSON.stringify(envelope, null, 2) },

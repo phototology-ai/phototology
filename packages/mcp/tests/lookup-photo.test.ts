@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
+import { z } from 'zod';
 
 jest.mock('@phototology/sdk', () => {
   const actual = jest.requireActual('@phototology/sdk');
@@ -69,7 +70,7 @@ describe('lookup_photo with local input (cascade)', () => {
       expect(result.isError).toBeFalsy();
     });
 
-    it('short-circuits when sha256 GET returns fuzzy (dummy-pHash collision via API)', async () => {
+    it('short-circuits on any non-none sha256 result (defensive: the API now answers exact or none)', async () => {
       const lookup = jest.fn().mockResolvedValueOnce({
         results: { [SHA256_OF_JPEG_BYTES]: { matchType: 'fuzzy', hammingDistance: 2, photo: { sha256: SHA256_OF_JPEG_BYTES } } },
       });
@@ -106,6 +107,33 @@ describe('lookup_photo with local input (cascade)', () => {
         imagesBase64: [JPEG_BYTES.toString('base64')],
       });
       expect(result.isError).toBeFalsy();
+    });
+  });
+
+  describe('cascade: sha256 miss reaches the POST tiers (pixels, pdq)', () => {
+    // The API's sha256-only GET is exact or none, so a miss there must still
+    // send the bytes: only the POST can match by decoded pixels or PDQ.
+    it.each(['pixels', 'pdq'] as const)('returns a %s match from the POST', async (matchType) => {
+      const lookup = jest
+        .fn()
+        .mockResolvedValueOnce({ results: { [SHA256_OF_JPEG_BYTES]: { matchType: 'none' } } })
+        .mockResolvedValueOnce({
+          results: {
+            [SHA256_OF_JPEG_BYTES]: {
+              matchType,
+              ...(matchType === 'pdq' ? { pdqDistance: 12 } : {}),
+              photo: { sha256: 'a'.repeat(64) },
+            },
+          },
+        });
+      const handler = captureHandler(makeMockClient(lookup));
+      const result = await handler({ imagePath: jpegPath });
+      expect(lookup).toHaveBeenCalledTimes(2);
+      expect(lookup.mock.calls[0][0]).toEqual({ sha256: SHA256_OF_JPEG_BYTES });
+      expect(lookup.mock.calls[1][0]).toEqual({ imagesBase64: [JPEG_BYTES.toString('base64')] });
+      const hit = JSON.parse(result.content[0].text);
+      expect(hit.matchType).toBe(matchType);
+      expect(hit.photo.sha256).toBe('a'.repeat(64));
     });
   });
 
@@ -198,6 +226,172 @@ describe('lookup_photo input validation', () => {
     });
     expect(result.isError).toBe(true);
     expect(lookup).not.toHaveBeenCalled();
+  });
+});
+
+describe('lookup_photo embedded registry id (before the cascade)', () => {
+  const FIXTURE_PATH = path.join(__dirname, 'fixtures/registry-id.jpg');
+  const FIXTURE_BYTES = fs.readFileSync(FIXTURE_PATH);
+  const EMBEDDED_ID = fs.readFileSync(path.join(__dirname, 'fixtures/registry-id.txt'), 'utf8').trim();
+  const FILE_SHA = crypto.createHash('sha256').update(FIXTURE_BYTES).digest('hex');
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const localImage = require('../src/lib/local-image');
+
+  afterEach(() => jest.restoreAllMocks());
+
+  it('looks up the embedded id first and skips hashing the file when it hits', async () => {
+    const hashSpy = jest.spyOn(localImage, 'computeSha256');
+    const lookup = jest.fn().mockResolvedValueOnce({
+      results: { [EMBEDDED_ID]: { matchType: 'exact', photo: { sha256: EMBEDDED_ID } } },
+    });
+    const handler = captureHandler(makeMockClient(lookup));
+
+    const result = await handler({ imagePath: FIXTURE_PATH });
+
+    expect(result.isError).toBeFalsy();
+    expect(lookup).toHaveBeenCalledTimes(1);
+    expect(lookup).toHaveBeenCalledWith({ sha256: EMBEDDED_ID });
+    expect(hashSpy).not.toHaveBeenCalled();
+    const hit = JSON.parse(result.content[0].text);
+    expect(hit.matchType).toBe('exact');
+    // The record found is the original's: the embedded id, also the resource.
+    expect(hit.photo.sha256).toBe(EMBEDDED_ID);
+    // Says how it matched, so an exact hit on a since-edited file is explainable.
+    expect(hit.matchedBy).toBe('registryId');
+    // Returns through the flattened envelope, resource and resource link included.
+    expect(hit.resource).toBe(`phototology://photo/${EMBEDDED_ID}`);
+    expect(result.structuredContent).toEqual(hit);
+    expect(result.content).toContainEqual(expect.objectContaining({ type: 'resource_link', name: EMBEDDED_ID }));
+  });
+
+  it('never reads the embedded id from a file the allow-list refused', async () => {
+    const ENV = 'PHOTOTOLOGY_MCP_ALLOWED_DIRS';
+    const saved = process.env[ENV];
+    const allowed = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-lookup-allowed-'));
+    process.env[ENV] = allowed;
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const readerSpy = jest.spyOn(require('../src/lib/registry-id'), 'readEmbeddedRegistryId');
+    try {
+      const lookup = jest.fn();
+      const handler = captureHandler(makeMockClient(lookup));
+      const result = await handler({ imagePath: FIXTURE_PATH });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('PATH_OUTSIDE_ALLOWED_DIRS');
+      expect(lookup).not.toHaveBeenCalled();
+      expect(readerSpy).not.toHaveBeenCalled();
+    } finally {
+      if (saved === undefined) delete process.env[ENV];
+      else process.env[ENV] = saved;
+      fs.rmSync(allowed, { recursive: true, force: true });
+    }
+  });
+
+  it('marks nothing as matchedBy registryId when the cascade, not the embedded id, matched', async () => {
+    const lookup = jest
+      .fn()
+      .mockResolvedValueOnce({ results: { [EMBEDDED_ID]: { matchType: 'none' } } })
+      .mockResolvedValueOnce({ results: { [FILE_SHA]: { matchType: 'exact', photo: { sha256: FILE_SHA } } } });
+    const handler = captureHandler(makeMockClient(lookup));
+
+    const result = await handler({ imagePath: FIXTURE_PATH });
+
+    expect(JSON.parse(result.content[0].text)).not.toHaveProperty('matchedBy');
+  });
+
+  it('does the same for imageBase64', async () => {
+    const lookup = jest.fn().mockResolvedValueOnce({
+      results: { [EMBEDDED_ID]: { matchType: 'exact', photo: { sha256: EMBEDDED_ID } } },
+    });
+    const handler = captureHandler(makeMockClient(lookup));
+
+    await handler({ imageBase64: FIXTURE_BYTES.toString('base64') });
+
+    expect(lookup).toHaveBeenCalledTimes(1);
+    expect(lookup).toHaveBeenCalledWith({ sha256: EMBEDDED_ID });
+  });
+
+  it('falls back to the existing cascade when the embedded id misses', async () => {
+    const lookup = jest
+      .fn()
+      .mockResolvedValueOnce({ results: { [EMBEDDED_ID]: { matchType: 'none' } } })
+      .mockResolvedValueOnce({ results: { [FILE_SHA]: { matchType: 'none' } } })
+      .mockResolvedValueOnce({ results: { [FILE_SHA]: { matchType: 'fuzzy', hammingDistance: 3 } } });
+    const handler = captureHandler(makeMockClient(lookup));
+
+    const result = await handler({ imagePath: FIXTURE_PATH });
+
+    expect(lookup).toHaveBeenCalledTimes(3);
+    expect(lookup.mock.calls[0][0]).toEqual({ sha256: EMBEDDED_ID });
+    expect(lookup.mock.calls[1][0]).toEqual({ sha256: FILE_SHA });
+    expect(lookup.mock.calls[2][0]).toEqual({ imagesBase64: [FIXTURE_BYTES.toString('base64')] });
+    expect(JSON.parse(result.content[0].text).matchType).toBe('fuzzy');
+  });
+
+  it('treats a fuzzy match on the embedded id as a miss and hashes the real bytes', async () => {
+    // Defensive: the API's sha256-only GET now answers exact or none, but the
+    // id is untrusted input, so only an exact match on it counts.
+    const lookup = jest
+      .fn()
+      .mockResolvedValueOnce({ results: { [EMBEDDED_ID]: { matchType: 'fuzzy', hammingDistance: 2 } } })
+      .mockResolvedValueOnce({ results: { [FILE_SHA]: { matchType: 'exact', photo: { sha256: FILE_SHA } } } });
+    const handler = captureHandler(makeMockClient(lookup));
+
+    const result = await handler({ imagePath: FIXTURE_PATH });
+
+    expect(lookup).toHaveBeenCalledTimes(2);
+    expect(lookup.mock.calls[0][0]).toEqual({ sha256: EMBEDDED_ID });
+    expect(lookup.mock.calls[1][0]).toEqual({ sha256: FILE_SHA });
+    expect(JSON.parse(result.content[0].text).matchType).toBe('exact');
+  });
+
+  it('runs the cascade unchanged when the file carries no id', async () => {
+    const lookup = jest.fn().mockResolvedValueOnce({
+      results: { [SHA256_OF_JPEG_BYTES]: { matchType: 'exact' } },
+    });
+    const handler = captureHandler(makeMockClient(lookup));
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-lookup-noid-'));
+    try {
+      const p = path.join(tmp, 'plain.jpg');
+      fs.writeFileSync(p, JPEG_BYTES);
+      await handler({ imagePath: p });
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+
+    expect(lookup).toHaveBeenCalledTimes(1);
+    expect(lookup).toHaveBeenCalledWith({ sha256: SHA256_OF_JPEG_BYTES });
+  });
+});
+
+describe('lookup_photo pHash input format', () => {
+  function inputSchema(): z.ZodObject<z.ZodRawShape> {
+    const server = new McpServer({ name: 'test', version: '0.0.1' });
+    const spy = jest.spyOn(server, 'registerTool');
+    registerLookupPhoto(server, makeMockClient(jest.fn()));
+    const call = spy.mock.calls.find((c) => c[0] === 'lookup_photo')!;
+    return z.object((call[1] as { inputSchema: z.ZodRawShape }).inputSchema);
+  }
+
+  it('accepts the 64-character bit string that analyze and lookup return', () => {
+    expect(inputSchema().safeParse({ pHash: '01'.repeat(32) }).success).toBe(true);
+  });
+
+  it('accepts 16 hex characters in any case', () => {
+    expect(inputSchema().safeParse({ pHash: '8F14e45fceea167a' }).success).toBe(true);
+  });
+
+  it.each([['15 characters', 'a'.repeat(15)], ['63 characters', '0'.repeat(63)], ['non-hex', 'g'.repeat(16)]])(
+    'rejects %s',
+    (_label, pHash) => {
+      expect(inputSchema().safeParse({ pHash }).success).toBe(false);
+    },
+  );
+
+  it('passes the pHash through to the API unchanged', async () => {
+    const lookup = jest.fn().mockResolvedValueOnce({ results: {} });
+    const handler = captureHandler(makeMockClient(lookup));
+    await handler({ pHash: '01'.repeat(32) });
+    expect(lookup).toHaveBeenCalledWith({ pHash: '01'.repeat(32) });
   });
 });
 

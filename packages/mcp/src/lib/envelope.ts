@@ -93,7 +93,10 @@ export function toAnalyzeEnvelope(res: AnalyzeResponse, photoSha256: string): An
   return {
     id: res.id,
     photo: {
-      ...fingerprint,
+      // SDK interfaces (Fingerprint, PdqFingerprint) carry no index signature,
+      // so TypeScript will not match them to the loose identity schema even
+      // though the fields line up; the schema tests parse the result.
+      ...(fingerprint as Record<string, unknown> | undefined),
       sha256: photoSha256,
       pHash: fingerprint?.pHash ?? '',
       dHash: fingerprint?.dHash ?? '',
@@ -142,7 +145,7 @@ export function toLookupEnvelope(
     // The SDK's PhotoRecord / LensIndexEntry are interfaces, which carry no
     // index signature, so TypeScript will not match them to the loose envelope
     // even though the fields line up; the schema tests parse the result.
-    ...(rest as Pick<LookupPhotoOutput, 'matchType' | 'photo' | 'hammingDistance' | 'computedHashes'>),
+    ...(rest as Pick<LookupPhotoOutput, 'matchType' | 'photo' | 'hammingDistance' | 'pdqDistance' | 'matchedBy' | 'computedHashes'>),
     receipts: Array.isArray(receipts) ? receipts : [],
     ...(credentials !== undefined ? { credentials } : {}),
     ...(sha256 ? { resource: photoResourceUri(sha256) } : {}),

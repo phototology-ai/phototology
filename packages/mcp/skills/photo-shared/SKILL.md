@@ -33,12 +33,12 @@ When the user attaches, drops, or references a local image (e.g., a file path in
 
 5. **Optionally pre-check credits** with `get_credits` if you anticipate a multi-lens or full-analysis call. Skip this for cheap 1–2 lens calls.
 
-6. **Surface `usage.creditsCharged` from the analyze response** so the user sees the cost. Then answer the user's question using only the relevant fields from the response; don't dump the entire JSON payload.
+6. **Surface `usage.creditsCharged` from the analyze response** so the user sees the cost. Then answer the user's question using only the relevant fields from the response. Don't dump the entire JSON payload.
 
 ## When NOT to use
 
 - The user shared an image but explicitly does not want it analyzed (e.g., "just look at this, don't run anything").
-- The image is a screenshot of code, a terminal, or a UI; those are usually for the model to read directly, not for Phototology's vision lenses.
+- The image is a screenshot of code, a terminal, or a UI. Those are usually for the model to read directly, not for Phototology's vision lenses.
 - The user is mid-flow on a non-photo task (debugging, code review) and an image is incidental context.
 
 ## Example flow

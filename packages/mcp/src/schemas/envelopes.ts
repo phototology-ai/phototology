@@ -16,7 +16,7 @@ export const PhotoIdentitySchema = z.looseObject({
   pixelsSha256: z.string().optional(),
   pHash: z.string(),
   dHash: z.string(),
-  pdq: z.looseObject({ hash: z.string(), quality: z.number() }).optional(),
+  pdq: z.looseObject({ hash: z.string(), quality: z.number(), variants: z.array(z.string()).optional() }).optional(),
   iscc: z.string().optional(),
 });
 export type PhotoIdentity = z.infer<typeof PhotoIdentitySchema>;
@@ -123,6 +123,8 @@ export const LookupPhotoOutputSchema = z.looseObject({
   matchType: MatchType,
   hammingDistance: z.number().optional(),
   pdqDistance: z.number().optional(),
+  /** Set when the match came from the registry id embedded in the file's XMP by a prior enrich. */
+  matchedBy: z.literal('registryId').optional(),
   photo: PhotoRecordSchema.optional(),
   computedHashes: z.looseObject({ sha256: z.string(), pHash: z.string(), dHash: z.string() }).optional(),
   receipts: Receipts,

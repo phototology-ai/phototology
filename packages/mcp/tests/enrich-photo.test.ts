@@ -37,6 +37,7 @@ const FAKE_ENRICH_RESPONSE = {
   formatsWritten: ['xmp'],
   lensVersions: { dating: '1.0' },
   sha256: 'deadbeef'.repeat(8),
+  registryId: 'deadbeef'.repeat(8),
   meta: {
     requestId: 'req_test',
     processingTimeMs: 50,
@@ -201,6 +202,69 @@ describe('enrich_photo error rendering', () => {
     const result = await handler({ imageUrl: 'https://example.com/p.jpg' });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('Analyze this photo first');
+  });
+});
+
+describe('enrich_photo registryId', () => {
+  // The enriched file carries the registry id (the sha256 of the bytes sent)
+  // in XMP; the result names it so the agent can look the photo up later.
+  // It comes from the API, which reports it only when the write stored it.
+  const { registryId: _omit, ...RESPONSE_WITHOUT_ID } = FAKE_ENRICH_RESPONSE;
+
+  it('passes the API registryId through rather than rebuilding it from sha256', async () => {
+    const handler = captureHandler(makeMockClient({
+      enrich: jest.fn().mockResolvedValue({ ...FAKE_ENRICH_RESPONSE, registryId: 'ab'.repeat(32) }),
+    }));
+    const result = await handler({ imageUrl: 'https://example.com/p.jpg' });
+    expect(JSON.parse(result.content[0].text).registryId).toBe('ab'.repeat(32));
+  });
+
+  it('omits registryId when the API did not write one', async () => {
+    const handler = captureHandler(makeMockClient({
+      enrich: jest.fn().mockResolvedValue(RESPONSE_WITHOUT_ID),
+    }));
+    const result = await handler({ imageUrl: 'https://example.com/p.jpg' });
+    expect(JSON.parse(result.content[0].text)).not.toHaveProperty('registryId');
+  });
+
+  it('omits registryId on the outputPath result when the API did not write one', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-enrich-noid-'));
+    try {
+      const handler = captureHandler(makeMockClient({
+        enrich: jest.fn().mockResolvedValue(RESPONSE_WITHOUT_ID),
+      }));
+      const result = await handler({
+        imageUrl: 'https://example.com/p.jpg',
+        outputPath: path.join(tmpDir, 'out.jpg'),
+      });
+      const payload = JSON.parse(result.content[0].text);
+      expect(payload.savedTo).toBe(path.join(tmpDir, 'out.jpg'));
+      expect(payload).not.toHaveProperty('registryId');
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('returns registryId alongside the enriched bytes', async () => {
+    const handler = captureHandler(makeMockClient());
+    const result = await handler({ imageUrl: 'https://example.com/p.jpg' });
+    const payload = JSON.parse(result.content[0].text);
+    expect(payload.registryId).toBe(FAKE_ENRICH_RESPONSE.sha256);
+  });
+
+  it('returns registryId when the file is saved to outputPath', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-enrich-regid-'));
+    try {
+      const handler = captureHandler(makeMockClient());
+      const result = await handler({
+        imageUrl: 'https://example.com/p.jpg',
+        outputPath: path.join(tmpDir, 'out.jpg'),
+      });
+      const payload = JSON.parse(result.content[0].text);
+      expect(payload.registryId).toBe(FAKE_ENRICH_RESPONSE.sha256);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });
 
