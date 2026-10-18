@@ -674,6 +674,13 @@ export interface PhototologyClientConfig {
    */
   maxElapsedMs?: number;
   /**
+   * The longest the client will wait for a rate-limit window to reset, in
+   * milliseconds. A wait learned from `Retry-After` or `x-ratelimit-reset`
+   * that is longer than this is not slept: the call throws `RateLimitedError`
+   * with `retryAfterSeconds` instead, without sending the request. Default: 10000.
+   */
+  maxRateLimitWaitMs?: number;
+  /**
    * Optional User-Agent string. Prepended to the SDK default so server-side
    * observability can identify callers. Example: `"my-app/1.2.0"`.
    * Final UA sent: `"<userAgent> @phototology/sdk/<version>"`.

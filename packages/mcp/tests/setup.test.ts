@@ -15,11 +15,17 @@ jest.mock('@phototology/sdk', () => {
 const mockReadFileSync = jest.fn().mockReturnValue('{}');
 const mockWriteFileSync = jest.fn();
 const mockMkdirSync = jest.fn();
+const mockRenameSync = jest.fn();
+const mockUnlinkSync = jest.fn();
+const mockRealpathSync = jest.fn((p: string) => p);
 
 jest.mock('fs', () => ({
   readFileSync: mockReadFileSync,
   writeFileSync: mockWriteFileSync,
   mkdirSync: mockMkdirSync,
+  renameSync: mockRenameSync,
+  unlinkSync: mockUnlinkSync,
+  realpathSync: mockRealpathSync,
 }));
 
 jest.mock('readline', () => ({
@@ -48,10 +54,12 @@ function simulateAnswers(answers: string[]) {
   });
 }
 
+/** The file a write lands in: a temp file renamed into place counts as its target. */
 function getWrittenConfig(callIndex = 0): { path: string; content: any } {
   const call = mockWriteFileSync.mock.calls[callIndex];
+  const renamed = mockRenameSync.mock.calls.find((c) => c[0] === call[0]);
   return {
-    path: call[0],
+    path: renamed ? renamed[1] : call[0],
     content: call[1].endsWith('\n')
       ? JSON.parse(call[1])
       : call[1], // TOML stays as string
@@ -137,13 +145,71 @@ describe('setupInteractive config output per editor', () => {
     await setupInteractive();
 
     const { path, content } = getWrittenConfig();
-    expect(path).toContain('.claude');
-    expect(path).toContain('settings.json');
+    // Claude Code reads user-scope MCP servers from ~/.claude.json, not ~/.claude/settings.json.
+    expect(path.endsWith('.claude.json')).toBe(true);
     expect(content.mcpServers.phototology).toEqual({
       command: 'npx',
       args: ['-y', '@phototology/mcp'],
       env: { PHOTOTOLOGY_API_KEY: API_KEY },
     });
+  });
+
+  it('writes ~/.claude.json through a temp file in the same folder, renamed into place', async () => {
+    mockRenameSync.mockClear();
+    simulateAnswers([API_KEY, '1']);
+    await setupInteractive();
+
+    const tmp = mockWriteFileSync.mock.calls[0][0] as string;
+    expect(tmp).not.toBe(getWrittenConfig().path);
+    expect(require('path').dirname(tmp)).toBe(require('path').dirname(getWrittenConfig().path));
+    expect(mockRenameSync).toHaveBeenCalledWith(tmp, expect.stringMatching(/\.claude\.json$/));
+    expect(mockWriteFileSync.mock.calls[0][2]).toEqual(expect.objectContaining({ mode: 0o600 }));
+  });
+
+  it('a rename that fails removes the temp file and leaves the target alone', async () => {
+    mockRenameSync.mockReset().mockImplementationOnce(() => { throw new Error('EXDEV: cross-device link'); });
+    mockUnlinkSync.mockClear();
+    simulateAnswers([API_KEY, '1']);
+    await setupInteractive();
+
+    const tmp = mockWriteFileSync.mock.calls[0][0] as string;
+    expect(tmp).toMatch(/\.tmp$/);
+    expect(mockUnlinkSync).toHaveBeenCalledWith(tmp);
+    const printed = mockStderr.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(printed).toMatch(/could not write/i);
+    expect(printed).not.toMatch(/Done! Wrote config/);
+    mockRenameSync.mockReset();
+  });
+
+  it('names claude mcp add and .mcp.json when it writes the Claude Code config', async () => {
+    simulateAnswers([API_KEY, '1']);
+    await setupInteractive();
+
+    const printed = mockStderr.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(printed).toContain('claude mcp add phototology');
+    expect(printed).toContain('.mcp.json');
+  });
+
+  it('keeps the other keys of an existing ~/.claude.json', async () => {
+    mockReadFileSync.mockReturnValue(JSON.stringify({ numStartups: 3, mcpServers: { other: { command: 'x' } } }));
+    simulateAnswers([API_KEY, '1']);
+    await setupInteractive();
+
+    const { content } = getWrittenConfig();
+    expect(content.numStartups).toBe(3);
+    expect(content.mcpServers.other).toEqual({ command: 'x' });
+    expect(content.mcpServers.phototology.command).toBe('npx');
+  });
+
+  it('never overwrites a config file it cannot parse, and prints what to add instead', async () => {
+    mockReadFileSync.mockReturnValue('{ not json');
+    simulateAnswers([API_KEY, '1']);
+    await setupInteractive();
+
+    expect(mockWriteFileSync).not.toHaveBeenCalled();
+    const printed = mockStderr.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(printed).toMatch(/could not parse/i);
+    expect(printed).toContain('claude mcp add phototology');
   });
 
   // Choice 2 = Cursor

@@ -1,18 +1,14 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { type PhototologyClient, LENS_FIELDS, PRESET_IDS, type LensId } from '@phototology/sdk';
+import { type PhototologyClient, PRESET_IDS, type LensId } from '@phototology/sdk';
+import { SELECTABLE_LENS_IDS } from '../lib/lens-ids';
 import { renderToolError } from './errors';
 import { readLocalImage, resolvePath, validateBase64, LocalImageError } from '../lib/local-image';
 import { toAnalyzeEnvelope, photoResourceLink, analyzedPhotoSha256 } from '../lib/envelope';
 import { AnalyzePhotoOutputSchema } from '../schemas';
 
-// `vehicle-condition` is in LENS_FIELDS (owns output) but is STACK-ONLY: the
-// API rejects it on direct selection (moduleComposition.ts INTERNAL_MODULES).
-// Keep it out of the selectable `lenses`/`modules` enum. (2.0.0 Pillar B: the
-// SDK should own this internal-lens list.)
-const INTERNAL_LENS_IDS = new Set<string>(['vehicle-condition']);
-const LENS_IDS = (Object.keys(LENS_FIELDS) as LensId[])
-  .filter((id) => !INTERNAL_LENS_IDS.has(id)) as [LensId, ...LensId[]];
+// Stack-only lenses (vehicle-condition) stay out of the selectable enum.
+const LENS_IDS = SELECTABLE_LENS_IDS;
 
 const AnalyzeInputSchema = {
   imageUrl: z.string().url().optional()
@@ -73,7 +69,7 @@ export function registerAnalyzePhoto(server: McpServer, client: PhototologyClien
         '',
         'Test vs live: a `pt_test_` key returns deterministic golden-fixture data, not a real analysis: `livemode` is `false`, `usage.creditsCharged` is `0`, `meta.provider` is `test-sandbox`, and the same payload comes back regardless of the image. Treat `livemode: false` output as an integration/wiring check, never as facts about the actual photo. A `pt_live_` key returns real model output with `livemode: true`.',
         '',
-        'Out of credits: returns an error whose `structuredContent.actions[0].url` is a wallet deep-link. Show the URL to the user verbatim. Do not retry the call.',
+        'Out of credits: returns an error whose first text line is JSON with `code: "OUT_OF_CREDITS"` and `actionUrl`, a wallet deep-link. Show the URL to the user verbatim. Do not retry the call.',
       ].join('\n'),
       inputSchema: AnalyzeInputSchema,
       outputSchema: AnalyzePhotoOutputSchema,

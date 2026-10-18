@@ -151,4 +151,27 @@ describe('fetchWithRetry', () => {
     expect(mockFetch.mock.calls.length).toBeGreaterThanOrEqual(1);
     expect(mockFetch.mock.calls.length).toBeLessThan(5);
   });
+
+  it('a retryable error without Retry-After never backs off past the deadline', async () => {
+    // A 502 has no Retry-After, so the plain backoff (500 ms) runs; with a
+    // 300 ms budget it must be clamped and the call must end at ~300 ms.
+    const errBody = {
+      error: { code: 'PROVIDER_UNAVAILABLE', message: 'Down', retryable: true, requestId: 'req_d' },
+    };
+    mockFetch.mockResolvedValue(mockResponse(502, errBody));
+
+    let settledAt: number | undefined;
+    const start = Date.now();
+    const promise = fetchWithRetry(
+      'https://api.test/v1/analyze',
+      { method: 'POST' },
+      { maxRetries: 3, timeout: 60_000, maxElapsedMs: 300 },
+    ).catch((e) => { settledAt = Date.now() - start; return e; });
+
+    await jest.advanceTimersByTimeAsync(350);
+    expect(settledAt).toBeDefined();
+    expect(settledAt!).toBeLessThanOrEqual(350);
+    expect(await promise).toBeInstanceOf(PhototologyError);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
 });

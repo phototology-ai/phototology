@@ -27,7 +27,7 @@ It listens on `http://localhost:3999`. Every `POST /v1/analyze` returns `402 PLA
 
 ### 3. Point Claude Code at the local MCP + mock
 
-Edit `~/.claude/settings.json` and add (or replace your existing `phototology` entry):
+Edit `~/.claude.json` (user scope; `claude mcp add` writes the same place) and add (or replace your existing `phototology` entry):
 
 ```json
 {
@@ -90,7 +90,7 @@ Should call `purchase_credits`. Verify Claude surfaces the wallet URL with `utm_
 
 ### 6. Tear down
 
-Stop the mock (`Ctrl-C` in its terminal). Restore your normal MCP config in `~/.claude/settings.json` (point back at `npx @phototology/mcp` once 1.1.0 is on npm, or your live key).
+Stop the mock (`Ctrl-C` in its terminal). Restore your normal MCP config in `~/.claude.json` (point back at `npx @phototology/mcp` once 1.1.0 is on npm, or your live key).
 
 ## Reporting results
 

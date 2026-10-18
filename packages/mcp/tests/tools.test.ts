@@ -114,7 +114,7 @@ describe('registerTools', () => {
     registerTools(server, 'pt_test_mykey');
 
     expect(PhototologyClient).toHaveBeenCalledTimes(1);
-    expect(PhototologyClient).toHaveBeenCalledWith({ apiKey: 'pt_test_mykey' });
+    expect(PhototologyClient).toHaveBeenCalledWith({ apiKey: 'pt_test_mykey', maxElapsedMs: 55_000, maxRateLimitWaitMs: 10_000 });
   });
 });
 

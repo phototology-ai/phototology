@@ -8,6 +8,7 @@ import { registerGetCredits } from './get-credits';
 import { registerPurchaseCredits } from './purchase-credits';
 import { registerEnrichPhoto } from './enrich-photo';
 import { mcpToolEvent, type McpEventProperties, type PhoneHomeOptions } from '../phone-home';
+import { setKeyContext } from '../lib/key-status';
 
 type ToolResult = {
   isError?: boolean;
@@ -21,19 +22,21 @@ interface TelemetryOpts extends PhoneHomeOptions {
 }
 
 /**
- * Best-effort machine error code from a rendered tool error. LocalImageError
- * results carry `{ error: { code } }` as JSON text; CreditExhaustedError carries
- * a `structuredContent.actions` array. Anything else (plain "Error: ..." text)
- * yields undefined. Never throws.
+ * Best-effort machine error code from a rendered tool error: the first text
+ * line of every rendered error is `{ code, retryable, ... }` JSON. A whole-text
+ * `{ error: { code } }` is still read for older shapes. Anything else (plain
+ * "Error: ..." text) yields undefined. Never throws.
  */
 function extractErrorCode(result: ToolResult): string | undefined {
+  const text = result?.content?.[0]?.text;
+  if (typeof text !== 'string') return undefined;
   try {
-    if (result?.structuredContent?.actions) return 'OUT_OF_CREDITS';
-    const text = result?.content?.[0]?.text;
-    if (typeof text === 'string') {
-      const parsed = JSON.parse(text);
-      if (typeof parsed?.error?.code === 'string') return parsed.error.code;
-    }
+    const whole = JSON.parse(text);
+    if (typeof whole?.error?.code === 'string') return whole.error.code;
+  } catch { /* not whole-text JSON */ }
+  try {
+    const head = JSON.parse(text.split('\n')[0]);
+    if (typeof head?.code === 'string') return head.code;
   } catch { /* plain text error: no machine code to extract */ }
   return undefined;
 }
@@ -137,11 +140,25 @@ function instrumentServer(server: McpServer, opts: TelemetryOpts): McpServer {
  * Returns the client so `registerResources` reads through the same instance
  * (one connection pool, one user agent).
  */
+/**
+ * Total time one SDK call may take, across attempts and backoffs: just under
+ * an MCP client's default 60 s request timeout. At the SDK default of 90 s a
+ * dead API surfaced as the client's own timeout instead of a tool error; much
+ * lower would fail real work, since a full-analysis call on one photo can run
+ * 20 to 30 s on the model side.
+ */
+export const MCP_CLIENT_MAX_ELAPSED_MS = 55_000;
+/** The longest a tool waits for a rate-limit reset before returning RATE_LIMITED. */
+export const MCP_CLIENT_MAX_RATE_LIMIT_WAIT_MS = 10_000;
+
 export function registerTools(server: McpServer, apiKey: string, userAgent?: string): PhototologyClient {
+  setKeyContext(apiKey, process.env.PHOTOTOLOGY_BASE_URL);
   const client = new PhototologyClient({
     apiKey,
     baseUrl: process.env.PHOTOTOLOGY_BASE_URL,
     userAgent,
+    maxElapsedMs: MCP_CLIENT_MAX_ELAPSED_MS,
+    maxRateLimitWaitMs: MCP_CLIENT_MAX_RATE_LIMIT_WAIT_MS,
   });
 
   const s = instrumentServer(server, {

@@ -1,4 +1,4 @@
-import { PhototologyError } from './errors';
+import { PhototologyError, RateLimitedError, rateLimitResetSentence } from './errors';
 import type { ErrorResponse } from './types';
 
 export interface RetryConfig {
@@ -14,6 +14,13 @@ export interface RetryConfig {
    * (legacy behavior). Default is set by the client (90s).
    */
   maxElapsedMs?: number;
+  /**
+   * The longest a 429 may be waited out, in ms. When the wait it names
+   * (`Retry-After`, or `x-ratelimit-reset` when `x-ratelimit-remaining` is 0,
+   * whichever is later) is longer, the 429 is thrown at once as a
+   * `RateLimitedError` carrying that wait. `undefined` = no cap (legacy).
+   */
+  maxRateLimitWaitMs?: number;
 }
 
 /**
@@ -112,6 +119,18 @@ export async function fetchWithRetry(
       throw error;
     }
 
+    // A 429 is waited out only when its reset is within maxRateLimitWaitMs.
+    if (response.status === 429 && config.maxRateLimitWaitMs !== undefined) {
+      const waitSeconds = rateLimitWaitSeconds(response.headers);
+      if (waitSeconds !== undefined && waitSeconds * 1000 > config.maxRateLimitWaitMs) {
+        throw new RateLimitedError(
+          `${error.message} ${rateLimitResetSentence(waitSeconds, config.maxRateLimitWaitMs)}`,
+          { code: error.code, status: error.status, retryable: error.retryable, requestId: error.requestId },
+          waitSeconds,
+        );
+      }
+    }
+
     lastError = error;
 
     // Don't sleep after the last attempt
@@ -126,7 +145,7 @@ export async function fetchWithRetry(
         }
       }
 
-      await sleep(backoff(attempt));
+      await cappedSleep(backoff(attempt));
     }
   }
 
@@ -137,6 +156,25 @@ export async function fetchWithRetry(
     retryable: false,
     requestId: 'unknown',
   });
+}
+
+/**
+ * Seconds until a 429 clears: `Retry-After`, or the `x-ratelimit-reset` of an
+ * exhausted window when that is later (a daily window's 429 can still say
+ * `Retry-After: 60`). `undefined` when neither header is usable.
+ */
+export function rateLimitWaitSeconds(headers: Headers): number | undefined {
+  let wait: number | undefined;
+  const retryAfter = parseInt(headers.get('retry-after') ?? '', 10);
+  if (!isNaN(retryAfter) && retryAfter > 0) wait = retryAfter;
+  if (headers.get('x-ratelimit-remaining') === '0') {
+    const reset = parseInt(headers.get('x-ratelimit-reset') ?? '', 10);
+    if (!isNaN(reset)) {
+      const untilReset = Math.ceil(reset - Date.now() / 1000);
+      if (untilReset > 0 && (wait === undefined || untilReset > wait)) wait = untilReset;
+    }
+  }
+  return wait;
 }
 
 function sleep(ms: number): Promise<void> {

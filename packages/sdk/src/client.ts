@@ -1,5 +1,5 @@
 import { fetchWithRetry } from './retry';
-import { PhototologyError, ValidationError } from './errors';
+import { PhototologyError, RateLimitedError, ValidationError, describeWait, rateLimitResetSentence } from './errors';
 import type {
   AnalyzeRequest,
   AnalyzeResponse,
@@ -27,6 +27,12 @@ const DEFAULT_TIMEOUT = 30_000;
 // worst case was (maxRetries + 1) * timeout ≈ 4 minutes on a flaky upstream.
 // 90s leaves room for ~3 attempts of real analyze while bounding the hang.
 const DEFAULT_MAX_ELAPSED_MS = 90_000;
+// The longest the client sleeps for a rate-limit reset. A daily window can
+// report a reset 24 h ahead; sleeping that out hangs every later call.
+const DEFAULT_MAX_RATE_LIMIT_WAIT_MS = 10_000;
+// A request sent with less than this left of maxElapsedMs can only time out,
+// so a rate-limit wait that would leave less throws instead.
+const MIN_REQUEST_BUDGET_MS = 1_000;
 
 // Bumped when a release needs to flip User-Agent reporting (see CHANGELOG).
 // Kept as a string literal rather than a package.json read so Node and edge
@@ -54,9 +60,12 @@ export class PhototologyClient {
   private readonly maxRetries: number;
   private readonly timeout: number;
   private readonly maxElapsedMs: number;
+  private readonly maxRateLimitWaitMs: number;
   private readonly userAgent: string;
-  /** Unix ms timestamp. If set and in the future, delay until this time. */
+  /** Unix ms timestamp. If set and in the future, the window is exhausted until then. */
   private rateLimitResetAt: number = 0;
+  /** `x-ratelimit-limit` of the exhausted window, for the error message. */
+  private rateLimitLimit: string | null = null;
 
   constructor(config?: PhototologyClientConfig) {
     const apiKey = config?.apiKey ?? process.env.PHOTOTOLOGY_API_KEY;
@@ -71,6 +80,7 @@ export class PhototologyClient {
     this.maxRetries = config?.maxRetries ?? DEFAULT_MAX_RETRIES;
     this.timeout = config?.timeout ?? DEFAULT_TIMEOUT;
     this.maxElapsedMs = config?.maxElapsedMs ?? DEFAULT_MAX_ELAPSED_MS;
+    this.maxRateLimitWaitMs = config?.maxRateLimitWaitMs ?? DEFAULT_MAX_RATE_LIMIT_WAIT_MS;
     this.userAgent = config?.userAgent
       ? `${config.userAgent} ${DEFAULT_USER_AGENT}`
       : DEFAULT_USER_AGENT;
@@ -232,11 +242,38 @@ export class PhototologyClient {
     body?: unknown,
     opts: { auth?: boolean } = {},
   ): Promise<Response> {
-    // Pre-emptive backoff: if we know we're rate-limited, wait until reset
-    const now = Date.now();
-    if (this.rateLimitResetAt > now) {
-      await new Promise((resolve) => setTimeout(resolve, this.rateLimitResetAt - now));
+    // Pre-emptive backoff: if we know we're rate-limited, wait until reset,
+    // but never longer than maxRateLimitWaitMs. Past that, throw without
+    // sending: the request would only spend another call on a 429. The wait
+    // counts against maxElapsedMs: a wait that would leave the request less
+    // than MIN_REQUEST_BUDGET_MS throws too, and the request gets what is left.
+    const startedAt = Date.now();
+    const bounded = this.maxElapsedMs > 0;
+    const waitMs = this.rateLimitResetAt - startedAt;
+    if (waitMs > 0) {
+      if (waitMs > this.maxRateLimitWaitMs) {
+        throw this.rateLimitedBeforeSend(rateLimitResetSentence(Math.ceil(waitMs / 1000), this.maxRateLimitWaitMs));
+      }
+      if (bounded && this.maxElapsedMs - waitMs <= MIN_REQUEST_BUDGET_MS) {
+        throw this.rateLimitedBeforeSend(this.budgetSentence(waitMs));
+      }
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+      // A slow timer can eat the margin checked above; check what is really
+      // left. Only after a sleep: with no wait, a small maxElapsedMs is the
+      // caller's choice and the request goes out.
+      const sleptMs = Date.now() - startedAt;
+      if (bounded && this.maxElapsedMs - sleptMs <= MIN_REQUEST_BUDGET_MS) {
+        throw this.rateLimitedBeforeSend(
+          `The client waited ${describeWait(Math.ceil(sleptMs / 1000))} for the limit to reset, which left this call ` +
+            `less than ${MIN_REQUEST_BUDGET_MS / 1000} second of its ${Math.round(this.maxElapsedMs / 1000)} second budget ` +
+            '(maxElapsedMs), so it did not send the request.',
+        );
+      }
     }
+    // 0 means "no deadline" to fetchWithRetry; when bounded it is at least 1.
+    const remainingBudgetMs = bounded
+      ? Math.max(1, this.maxElapsedMs - (Date.now() - startedAt))
+      : 0;
 
     const url = `${this.baseUrl}${path}`;
     const headers: Record<string, string> = {
@@ -251,24 +288,63 @@ export class PhototologyClient {
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     };
 
-    const response = await fetchWithRetry(url, init, {
-      maxRetries: this.maxRetries,
-      timeout: this.timeout,
-      maxElapsedMs: this.maxElapsedMs,
-    });
+    let response: Response;
+    try {
+      response = await fetchWithRetry(url, init, {
+        maxRetries: this.maxRetries,
+        timeout: this.timeout,
+        maxElapsedMs: remainingBudgetMs,
+        maxRateLimitWaitMs: this.maxRateLimitWaitMs,
+      });
+    } catch (err) {
+      // Remember a 429's reset so the next call fails fast instead of
+      // spending another request on the same exhausted window.
+      if (err instanceof RateLimitedError && err.retryAfterSeconds) {
+        this.rateLimitResetAt = Date.now() + err.retryAfterSeconds * 1000;
+      }
+      throw err;
+    }
 
     // Track rate limit state from response headers
     const remaining = response.headers.get('x-ratelimit-remaining');
     if (remaining === '0') {
       const reset = response.headers.get('x-ratelimit-reset');
       if (reset) {
-        this.rateLimitResetAt = parseInt(reset, 10) * 1000; // Unix seconds → ms
+        this.rateLimitResetAt = parseInt(reset, 10) * 1000; // Unix seconds to ms
+        this.rateLimitLimit = response.headers.get('x-ratelimit-limit');
       }
     } else if (remaining !== null) {
       this.rateLimitResetAt = 0;
     }
 
     return response;
+  }
+
+  /**
+   * A RateLimitedError for a request the client decided not to send.
+   * `retryAfterSeconds` is the time until the real reset: 0 once it has passed.
+   */
+  private rateLimitedBeforeSend(why: string): RateLimitedError {
+    const seconds = Math.ceil(Math.max(0, this.rateLimitResetAt - Date.now()) / 1000);
+    const used = this.rateLimitLimit
+      ? `all ${this.rateLimitLimit} requests in the current window are used`
+      : 'no requests are left in the current window';
+    // Once the reset has passed, the window is open again; only the budget is gone.
+    const opening = seconds === 0 ? 'Rate limit window has reset' : `Rate limit reached: ${used}`;
+    return new RateLimitedError(
+      `${opening}. ${why}`,
+      { code: 'RATE_LIMITED', status: 429, retryable: true, requestId: 'none' },
+      seconds,
+    );
+  }
+
+  /** Why a wait inside the window was not taken: it would use up maxElapsedMs. */
+  private budgetSentence(waitMs: number): string {
+    const seconds = Math.max(1, Math.ceil(waitMs / 1000));
+    const at = new Date(Date.now() + waitMs).toISOString();
+    return `The limit resets in ${describeWait(seconds)} (at ${at}). ` +
+      `Waiting for it would leave this call less than ${MIN_REQUEST_BUDGET_MS / 1000} second of its ` +
+      `${Math.round(this.maxElapsedMs / 1000)} second budget (maxElapsedMs), so the client did not send the request.`;
   }
 }
 

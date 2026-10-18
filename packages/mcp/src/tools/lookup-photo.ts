@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { PhototologyClient, LookupResponse } from '@phototology/sdk';
-import { renderToolError } from './errors';
+import { renderToolError, sandboxRefusal } from './errors';
 import {
   readLocalImage,
   resolvePath,
@@ -85,6 +85,8 @@ export function registerLookupPhoto(server: McpServer, client: PhototologyClient
       },
     },
     async ({ imageUrl, sha256, pHash, imagePath, imageBase64, threshold }: LookupArgs) => {
+      const refusal = await sandboxRefusal();
+      if (refusal) return refusal;
       try {
         // Refinement: exactly one image input mode. Empty strings count as "not provided".
         const provided = [sha256, pHash, imageUrl, imagePath, imageBase64].filter(

@@ -305,7 +305,7 @@ describe('enrich_photo never overwrites', () => {
     const handler = captureHandler(client);
     const result = await handler({ imagePath: inPath, outputPath: outPath });
     expect(result.isError).toBe(true);
-    expect(JSON.parse(result.content[0].text).error.code).toBe('OUTPUT_EXISTS');
+    expect(errorOf(result).code).toBe('OUTPUT_EXISTS');
     expect(client.enrich).not.toHaveBeenCalled();
     expect(fs.readFileSync(outPath, 'utf8')).toBe('keep me');
   });
@@ -326,7 +326,7 @@ describe('enrich_photo never overwrites', () => {
     const handler = captureHandler(client);
     const result = await handler({ imagePath: inPath, outputPath: inPath, overwrite: true });
     expect(result.isError).toBe(true);
-    expect(JSON.parse(result.content[0].text).error.code).toBe('OUTPUT_IS_INPUT');
+    expect(errorOf(result).code).toBe('OUTPUT_IS_INPUT');
     expect(client.enrich).not.toHaveBeenCalled();
     expect(Buffer.compare(fs.readFileSync(inPath), JPEG_BYTES)).toBe(0);
   });
@@ -338,7 +338,7 @@ describe('enrich_photo never overwrites', () => {
     const handler = captureHandler(client);
     const result = await handler({ imagePath: inPath, outputPath: linkPath, overwrite: true });
     expect(result.isError).toBe(true);
-    expect(JSON.parse(result.content[0].text).error.code).toBe('OUTPUT_IS_INPUT');
+    expect(errorOf(result).code).toBe('OUTPUT_IS_INPUT');
     expect(client.enrich).not.toHaveBeenCalled();
     expect(Buffer.compare(fs.readFileSync(inPath), JPEG_BYTES)).toBe(0);
   });
@@ -354,7 +354,7 @@ describe('enrich_photo never overwrites', () => {
       overwrite: true,
     });
     expect(result.isError).toBe(true);
-    expect(JSON.parse(result.content[0].text).error.code).toBe('OUTPUT_IS_INPUT');
+    expect(errorOf(result).code).toBe('OUTPUT_IS_INPUT');
     expect(client.enrich).not.toHaveBeenCalled();
   });
 
@@ -365,7 +365,7 @@ describe('enrich_photo never overwrites', () => {
     const handler = captureHandler(client);
     const result = await handler({ imagePath: inPath, outputPath: hardPath, overwrite: true });
     expect(result.isError).toBe(true);
-    expect(JSON.parse(result.content[0].text).error.code).toBe('OUTPUT_IS_INPUT');
+    expect(errorOf(result).code).toBe('OUTPUT_IS_INPUT');
     expect(client.enrich).not.toHaveBeenCalled();
     expect(Buffer.compare(fs.readFileSync(inPath), JPEG_BYTES)).toBe(0);
   });
@@ -381,7 +381,7 @@ describe('enrich_photo never overwrites', () => {
     const result = await handler({ imagePath: inPath, outputPath: outPath });
     expect(enrich).toHaveBeenCalledTimes(1);
     expect(result.isError).toBe(true);
-    expect(JSON.parse(result.content[0].text).error.code).toBe('OUTPUT_EXISTS');
+    expect(errorOf(result).code).toBe('OUTPUT_EXISTS');
     expect(fs.readFileSync(outPath, 'utf8')).toBe('arrived first');
   });
 
@@ -454,7 +454,7 @@ describe('enrich_photo honors PHOTOTOLOGY_MCP_ALLOWED_DIRS for outputPath', () =
     const outPath = path.join(base, 'other', 'out.jpg');
     const result = await handler({ imagePath: path.join(base, 'in', 'photo.jpg'), outputPath: outPath });
     expect(result.isError).toBe(true);
-    expect(JSON.parse(result.content[0].text).error.code).toBe('PATH_OUTSIDE_ALLOWED_DIRS');
+    expect(errorOf(result).code).toBe('PATH_OUTSIDE_ALLOWED_DIRS');
     expect(client.enrich).not.toHaveBeenCalled();
     expect(fs.existsSync(outPath)).toBe(false);
   });
@@ -465,7 +465,7 @@ describe('enrich_photo honors PHOTOTOLOGY_MCP_ALLOWED_DIRS for outputPath', () =
     const outPath = path.join(base, 'no-such-dir', 'out.jpg');
     const result = await handler({ imagePath: path.join(base, 'in', 'photo.jpg'), outputPath: outPath });
     expect(result.isError).toBe(true);
-    expect(JSON.parse(result.content[0].text).error.code).toBe('PATH_OUTSIDE_ALLOWED_DIRS');
+    expect(errorOf(result).code).toBe('PATH_OUTSIDE_ALLOWED_DIRS');
     expect(client.enrich).not.toHaveBeenCalled();
   });
 
@@ -474,7 +474,7 @@ describe('enrich_photo honors PHOTOTOLOGY_MCP_ALLOWED_DIRS for outputPath', () =
     const handler = captureHandler(client);
     const result = await handler({ imagePath: path.join(base, 'in', 'photo.jpg'), outputPath: path.join(base, 'in', 'nope', 'out.jpg') });
     expect(result.isError).toBe(true);
-    expect(JSON.parse(result.content[0].text).error.code).toBe('FILE_NOT_FOUND');
+    expect(errorOf(result).code).toBe('FILE_NOT_FOUND');
     expect(client.enrich).not.toHaveBeenCalled();
   });
 
@@ -489,7 +489,7 @@ describe('enrich_photo honors PHOTOTOLOGY_MCP_ALLOWED_DIRS for outputPath', () =
       outputPath: `${path.join(base, 'in', 'link')}/../x.jpg`,
     });
     expect(result.isError).toBe(true);
-    expect(JSON.parse(result.content[0].text).error.code).toBe('PATH_OUTSIDE_ALLOWED_DIRS');
+    expect(errorOf(result).code).toBe('PATH_OUTSIDE_ALLOWED_DIRS');
     expect(client.enrich).not.toHaveBeenCalled();
     expect(fs.existsSync(path.join(base, 'other', 'x.jpg'))).toBe(false);
     expect(fs.existsSync(path.join(base, 'in', 'x.jpg'))).toBe(false);
@@ -519,7 +519,7 @@ describe('enrich_photo honors PHOTOTOLOGY_MCP_ALLOWED_DIRS for outputPath', () =
     const outputPath = `${base}/${via}/../${via === 'in/sub' ? '' : 'in/'}y.jpg`;
     const result = await handler({ imagePath: path.join(base, 'in', 'photo.jpg'), outputPath });
     expect(result.isError).toBe(true);
-    const error = JSON.parse(result.content[0].text).error;
+    const error = errorOf(result);
     expect(error.code).toBe('PATH_OUTSIDE_ALLOWED_DIRS');
     expect(error.message).toContain(outputPath);
     expect(client.enrich).not.toHaveBeenCalled();
@@ -531,7 +531,7 @@ describe('enrich_photo honors PHOTOTOLOGY_MCP_ALLOWED_DIRS for outputPath', () =
     const handler = captureHandler(client);
     const result = await handler({ imagePath: `${base}/${via}/../in/photo.jpg` });
     expect(result.isError).toBe(true);
-    expect(JSON.parse(result.content[0].text).error.code).toBe('PATH_OUTSIDE_ALLOWED_DIRS');
+    expect(errorOf(result).code).toBe('PATH_OUTSIDE_ALLOWED_DIRS');
     expect(client.enrich).not.toHaveBeenCalled();
   });
 
@@ -543,7 +543,7 @@ describe('enrich_photo honors PHOTOTOLOGY_MCP_ALLOWED_DIRS for outputPath', () =
       outputPath: `${path.join(base, 'in')}/${last}`,
     });
     expect(result.isError).toBe(true);
-    expect(JSON.parse(result.content[0].text).error.code).toBe('INVALID_OUTPUT_PATH');
+    expect(errorOf(result).code).toBe('INVALID_OUTPUT_PATH');
     expect(client.enrich).not.toHaveBeenCalled();
   });
 
@@ -552,7 +552,7 @@ describe('enrich_photo honors PHOTOTOLOGY_MCP_ALLOWED_DIRS for outputPath', () =
     const handler = captureHandler(client);
     const result = await handler({ imagePath: path.join(base, 'in', 'photo.jpg'), outputPath: `${path.join(base, 'in', 'x.jpg')}/` });
     expect(result.isError).toBe(true);
-    expect(JSON.parse(result.content[0].text).error.code).toBe('INVALID_OUTPUT_PATH');
+    expect(errorOf(result).code).toBe('INVALID_OUTPUT_PATH');
   });
 
   it('writes an outputPath inside the allowed folder', async () => {
@@ -595,7 +595,7 @@ describe('enrich_photo never writes through a symlink at outputPath', () => {
     const handler = captureHandler(client);
     const result = await handler({ imagePath: path.join(base, 'in', 'photo.jpg'), outputPath: linkPath, overwrite: true });
     expect(result.isError).toBe(true);
-    expect(JSON.parse(result.content[0].text).error.code).toBe('OUTPUT_IS_SYMLINK');
+    expect(errorOf(result).code).toBe('OUTPUT_IS_SYMLINK');
     expect(client.enrich).not.toHaveBeenCalled();
     expect(fs.existsSync(target)).toBe(false);
   });
@@ -609,7 +609,7 @@ describe('enrich_photo never writes through a symlink at outputPath', () => {
     const handler = captureHandler(client);
     const result = await handler({ imagePath: path.join(base, 'in', 'photo.jpg'), outputPath: linkPath, overwrite: true });
     expect(result.isError).toBe(true);
-    expect(JSON.parse(result.content[0].text).error.code).toBe('OUTPUT_IS_SYMLINK');
+    expect(errorOf(result).code).toBe('OUTPUT_IS_SYMLINK');
     expect(client.enrich).not.toHaveBeenCalled();
     expect(fs.readFileSync(target, 'utf8')).toBe('keep me');
   });
@@ -665,7 +665,7 @@ describe('enrich_photo without an allow-list still resolves ..', () => {
     const client = makeMockClient();
     const handler = captureHandler(client);
     const result = await handler({ imagePath: path.join(base, 'in', 'photo.jpg'), outputPath: `${base}/in/..` });
-    expect(JSON.parse(result.content[0].text).error.code).toBe('INVALID_OUTPUT_PATH');
+    expect(errorOf(result).code).toBe('INVALID_OUTPUT_PATH');
   });
 });
 
@@ -774,17 +774,20 @@ describe('enrich_photo sidecar mode (the photo carries a valid content credentia
     const result = await handler({ imagePath: inPath });
     expect(client.enrich).toHaveBeenCalledTimes(1);
     expect(result.isError).toBe(true);
-    const payload = JSON.parse(result.content[0].text);
-    expect(payload.error.code).toBe('OUTPUT_EXISTS');
-    expect(payload.error.path).toBe(`${inPath}.xmp`);
-    expect(payload.error.message).toContain(`sidecar path ${inPath}.xmp already exists`);
-    expect(payload.error.message).toContain('overwrite: true');
-    expect(payload.error.message).not.toContain('outputPath');
-    expect(payload.error.message).not.toMatch(/created by something else/);
-    expect(payload.sidecar).toEqual({ xmp: XMP_PACKET });
-    expect(payload.usage.creditsCharged).toBe(5);
-    expect(payload.mode).toBe('sidecar');
-    expect(result.structuredContent.sidecar).toEqual({ xmp: XMP_PACKET });
+    // Text only (no structuredContent): JSON first line, then the sentence.
+    expect(result.structuredContent).toBeUndefined();
+    const [first, ...rest] = result.content[0].text.split('\n');
+    const head = JSON.parse(first);
+    const sentence = rest.join('\n');
+    expect(head.code).toBe('OUTPUT_EXISTS');
+    expect(head.retryable).toBe(false);
+    expect(head.sidecarPath).toBe(`${inPath}.xmp`);
+    expect(sentence).toContain(`sidecar path ${inPath}.xmp already exists`);
+    expect(sentence).toContain('overwrite: true');
+    expect(sentence).not.toContain('outputPath');
+    expect(sentence).not.toMatch(/created by something else/);
+    expect(head.sidecar).toEqual({ xmp: XMP_PACKET });
+    expect(head.creditsCharged).toBe(5);
     expect(fs.readFileSync(`${inPath}.xmp`, 'utf8')).toBe('keep me');
     expect(sha(fs.readFileSync(inPath))).toBe(before);
   });
@@ -813,7 +816,7 @@ describe('enrich_photo sidecar mode (the photo carries a valid content credentia
     const handler = captureHandler(client);
     const result = await handler({ imagePath: inPath });
     expect(result.isError).toBe(true);
-    expect(JSON.parse(result.content[0].text).error.code).toBe('OUTPUT_IS_SYMLINK');
+    expect(errorOf(result).code).toBe('OUTPUT_IS_SYMLINK');
     expect(client.enrich).not.toHaveBeenCalled();
     expect(fs.readFileSync(victim, 'utf8')).toBe('keep me');
   });
@@ -828,7 +831,7 @@ describe('enrich_photo sidecar mode (the photo carries a valid content credentia
     expect(fs.readFileSync(`${inPath}.xmp`, 'utf8')).toBe('keep me');
   });
 
-  it('a sidecar created during the call is kept, and the paid packet comes back in text and structuredContent', async () => {
+  it('a sidecar created during the call is kept, and the paid packet comes back on the JSON first line', async () => {
     const enrich = jest.fn().mockImplementation(async () => {
       fs.writeFileSync(`${inPath}.xmp`, 'arrived first');
       return SIDECAR_RESPONSE;
@@ -836,14 +839,15 @@ describe('enrich_photo sidecar mode (the photo carries a valid content credentia
     const handler = captureHandler(makeMockClient({ enrich }));
     const result = await handler({ imagePath: inPath });
     expect(result.isError).toBe(true);
-    const payload = JSON.parse(result.content[0].text);
-    expect(payload.error.code).toBe('OUTPUT_EXISTS');
-    expect(payload.error.path).toBe(`${inPath}.xmp`);
-    expect(payload.error.message).toContain(`sidecar path ${inPath}.xmp`);
-    expect(payload.error.message).not.toContain('outputPath');
-    expect(payload.sidecar).toEqual({ xmp: XMP_PACKET });
-    expect(payload.usage.creditsCharged).toBe(5);
-    expect(result.structuredContent.sidecar).toEqual({ xmp: XMP_PACKET });
+    expect(result.structuredContent).toBeUndefined();
+    const [first, ...rest] = result.content[0].text.split('\n');
+    const head = JSON.parse(first);
+    expect(head.code).toBe('OUTPUT_EXISTS');
+    expect(head.sidecarPath).toBe(`${inPath}.xmp`);
+    expect(rest.join('\n')).toContain(`sidecar path ${inPath}.xmp`);
+    expect(rest.join('\n')).not.toContain('outputPath');
+    expect(head.sidecar).toEqual({ xmp: XMP_PACKET });
+    expect(head.creditsCharged).toBe(5);
     expect(fs.readFileSync(`${inPath}.xmp`, 'utf8')).toBe('arrived first');
   });
 
@@ -863,7 +867,7 @@ describe('enrich_photo sidecar mode (the photo carries a valid content credentia
     const handler = captureHandler(client);
     const result = await handler({ imagePath: inPath, overwrite: true });
     expect(result.isError).toBe(true);
-    const error = JSON.parse(result.content[0].text).error;
+    const error = errorOf(result);
     expect(error.code).toBe('OUTPUT_IS_SYMLINK');
     expect(error.message).toContain(`sidecar path ${inPath}.xmp`);
     expect(error.message).not.toContain('outputPath');
@@ -964,6 +968,12 @@ const MINIMAL_SIDECAR_RESPONSE = {
   reason: 'Writing into the file would invalidate its Content Credential.',
   meta: { requestId: 'req_side', processingTimeMs: 40, creditsCharged: 5, ai_generated: true },
 };
+
+/** A tool error: its one-line JSON head, with the sentence after it as `message`. */
+function errorOf(result: any): Record<string, any> {
+  const [first, ...rest] = String(result.content[0].text).split('\n');
+  return { ...JSON.parse(first), message: rest.join('\n') };
+}
 
 function imageBlocks(result: any): any[] {
   return result.content.filter((c: any) => c.type === 'image');

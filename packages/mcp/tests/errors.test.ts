@@ -1,9 +1,11 @@
-import { CreditExhaustedError } from '@phototology/sdk';
+import { CreditExhaustedError, RateLimitedError } from '@phototology/sdk';
 import { renderToolError } from '../src/tools/errors';
+import { LocalImageError } from '../src/lib/local-image';
+import { setKeyContext, setStartupProblem } from '../src/lib/key-status';
 
 describe('renderToolError', () => {
   describe('CreditExhaustedError', () => {
-    it('C1: leads with OUT_OF_CREDITS, states NOT retryable + STOP, mirrors machine fields in structuredContent', () => {
+    it('C1: a JSON first line with the machine fields, then OUT_OF_CREDITS, NOT retryable + STOP; no structuredContent', () => {
       const err = new CreditExhaustedError('Out of credits', {
         code: 'PLAN_LIMIT_EXCEEDED',
         status: 402,
@@ -21,9 +23,10 @@ describe('renderToolError', () => {
       expect(result.isError).toBe(true);
       expect(result.content).toHaveLength(1);
       expect(result.content[0].type).toBe('text');
-      const text = result.content[0].text;
-      // Spec §7: the stop-signal phrases a model must read. The server instructions
-      // quote this exact opening (tests/server-instructions.test.ts).
+      const [head, text] = result.content[0].text.split('\n');
+      // Spec §7: the stop-signal phrases a model must read, on the line after the
+      // machine fields. The server instructions describe both lines
+      // (tests/server-instructions.test.ts).
       expect(text.startsWith('OUT_OF_CREDITS:')).toBe(true);
       expect(text).toContain('NOT retryable');
       expect(text).toContain('STOP');
@@ -32,19 +35,16 @@ describe('renderToolError', () => {
       expect(text).toContain('12 days'); // resetsInDays
       expect(text).toContain('https://phototology.com/wallet'); // purchaseUrl inline
 
-      // Machine-legible mirror.
-      expect(result.structuredContent).toBeDefined();
-      expect(result.structuredContent!.code).toBe('OUT_OF_CREDITS');
-      expect(result.structuredContent!.retryable).toBe(false);
-      expect(result.structuredContent!.actionUrl).toBe('https://phototology.com/wallet');
-      expect(result.structuredContent!.creditsRequired).toBe(5);
-      expect(result.structuredContent!.balance).toBe(0); // === totalBalance
-      expect(result.structuredContent!.actions).toHaveLength(1);
-      expect(result.structuredContent!.actions[0]).toMatchObject({
-        type: 'open_url',
-        label: expect.stringMatching(/buy credits/i),
-        url: expect.stringContaining('phototology.com/wallet'),
+      // Machine-legible first line. No structuredContent: the official client
+      // validates it against the outputSchema even on isError (tests/error-roundtrip.test.ts).
+      expect(JSON.parse(head)).toEqual({
+        code: 'OUT_OF_CREDITS',
+        retryable: false,
+        actionUrl: 'https://phototology.com/wallet',
+        creditsRequired: 5,
+        balance: 0, // === totalBalance
       });
+      expect((result as any).structuredContent).toBeUndefined();
     });
 
     it('omits the community auto-refill sentence when resetsInDays is missing; balance reflects totalBalance', () => {
@@ -66,8 +66,7 @@ describe('renderToolError', () => {
       expect(text).toContain('3 credits');
       expect(text).not.toContain('auto-refill');
       expect(text).toContain('STOP');
-      expect(result.structuredContent!.balance).toBe(1);
-      expect(result.structuredContent!.actions[0].type).toBe('open_url');
+      expect(JSON.parse(text.split('\n')[0]).balance).toBe(1);
     });
   });
 
@@ -76,13 +75,53 @@ describe('renderToolError', () => {
       const result = renderToolError(new Error('boom'));
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toBe('Error: boom');
-      expect(result.structuredContent).toBeUndefined();
+      expect((result as any).structuredContent).toBeUndefined();
     });
 
     it('stringifies non-Error throwables', () => {
       const result = renderToolError('plain string');
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toBe('Error: plain string');
+    });
+  });
+
+  describe('RateLimitedError', () => {
+    const opts = { code: 'RATE_LIMITED', status: 429, retryable: true, requestId: 'req_rl' };
+
+    it('a wait past 600 s is not retryable, and the sentence says when the limit resets', () => {
+      const [head, text] = renderToolError(new RateLimitedError('Too many requests.', opts, 900)).content[0].text.split('\n');
+      expect(JSON.parse(head)).toEqual({ code: 'RATE_LIMITED', retryable: false, retryAfterSeconds: 900 });
+      expect(text).toContain('The limit resets in 15 minutes.');
+      expect(text).toContain('No retry in this session will help');
+    });
+
+    it('does not repeat the reset when the SDK message already states it', () => {
+      const text = renderToolError(new RateLimitedError('Limit hit. The limit resets in 24 hours (at x).', opts, 86_400)).content[0].text;
+      expect(text.match(/resets in/g)).toHaveLength(1);
+    });
+
+    it('a wait of 600 s or less is retryable', () => {
+      const head = renderToolError(new RateLimitedError('Too many requests.', opts, 600)).content[0].text.split('\n')[0];
+      expect(JSON.parse(head)).toEqual({ code: 'RATE_LIMITED', retryable: true, retryAfterSeconds: 600 });
+    });
+  });
+
+  describe('start-up note', () => {
+    afterEach(() => setKeyContext('pt_live_reset'));
+
+    it('is never appended to a local-file error, which has the one-line JSON head and its sentence', () => {
+      setKeyContext('pt_live_x');
+      setStartupProblem('the API rejected it (Invalid or revoked API key).');
+      const result = renderToolError(new LocalImageError('FILE_NOT_FOUND', 'No file at /tmp/x.jpg', { path: '/tmp/x.jpg' }));
+      const [first, ...rest] = result.content[0].text.split('\n');
+      expect(JSON.parse(first)).toEqual({ code: 'FILE_NOT_FOUND', retryable: false, path: '/tmp/x.jpg' });
+      expect(rest.join('\n')).toBe('No file at /tmp/x.jpg');
+    });
+
+    it('is appended to other errors', () => {
+      setKeyContext('pt_live_x');
+      setStartupProblem('the API rejected it (Invalid or revoked API key).');
+      expect(renderToolError(new Error('boom')).content[0].text).toMatch(/start-up/);
     });
   });
 });

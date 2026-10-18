@@ -1,5 +1,5 @@
 import { PhototologyClient } from '../src/client';
-import { AuthenticationError, PhototologyError } from '../src/errors';
+import { AuthenticationError, PhototologyError, RateLimitedError } from '../src/errors';
 import type { AnalyzeResponse, ModulesResponse } from '../src/types';
 
 // Mock global fetch
@@ -301,6 +301,187 @@ describe('PhototologyClient', () => {
       await client.analyze({ imageUrl: 'https://example.com/photo2.jpg' });
 
       expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('rate-limit wait cap (maxRateLimitWaitMs)', () => {
+    const DAY_S = 24 * 60 * 60;
+
+    it('throws at once, without sending, when a 200 reported remaining 0 and the reset is a day away', async () => {
+      const resetTime = Math.floor(Date.now() / 1000) + DAY_S;
+      mockFetch.mockResolvedValueOnce(mockJsonResponse(200, FIXTURE_RESPONSE, {
+        'x-ratelimit-limit': '10',
+        'x-ratelimit-remaining': '0',
+        'x-ratelimit-reset': String(resetTime),
+      }));
+      mockFetch.mockResolvedValueOnce(mockJsonResponse(200, FIXTURE_RESPONSE));
+
+      const client = new PhototologyClient({ apiKey: TEST_KEY, baseUrl: 'https://api.test' });
+      await client.modules();
+
+      const startMs = Date.now();
+      const err = await client.modules().then(() => null, (e: unknown) => e);
+      expect(Date.now() - startMs).toBeLessThan(500);
+      expect(err).toBeInstanceOf(RateLimitedError);
+      const rl = err as RateLimitedError;
+      expect(rl.code).toBe('RATE_LIMITED');
+      expect(rl.retryAfterSeconds).toBeGreaterThan(DAY_S - 60);
+      expect(rl.retryAfterSeconds).toBeLessThanOrEqual(DAY_S);
+      expect(rl.message).toMatch(/10 requests/);
+      expect(rl.message).toMatch(/resets/);
+      // The second request never went out.
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('a 429 with Retry-After 60 throws at once instead of sleeping 60 s, with retryAfterSeconds 60', async () => {
+      mockFetch.mockResolvedValue(mockJsonResponse(429, {
+        error: { code: 'RATE_LIMITED', message: 'Anonymous test key rate limit exceeded. 2 requests per minute per IP.', retryable: true, requestId: 'req_rl' },
+      }, { 'retry-after': '60' }));
+
+      const client = new PhototologyClient({ apiKey: TEST_KEY, baseUrl: 'https://api.test' });
+      const startMs = Date.now();
+      const err = await client.modules().then(() => null, (e: unknown) => e);
+      expect(Date.now() - startMs).toBeLessThan(10_500);
+      expect(err).toBeInstanceOf(RateLimitedError);
+      expect((err as RateLimitedError).retryAfterSeconds).toBe(60);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    }, 15_000);
+
+    it('a 429 on the daily window uses x-ratelimit-reset for retryAfterSeconds, not the 60 s Retry-After', async () => {
+      const resetTime = Math.floor(Date.now() / 1000) + DAY_S;
+      mockFetch.mockResolvedValue(mockJsonResponse(429, {
+        error: { code: 'RATE_LIMITED', message: 'Anonymous test key daily limit exceeded. 10 requests per day per IP.', retryable: true, requestId: 'req_rl' },
+      }, { 'retry-after': '60', 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(resetTime) }));
+
+      const client = new PhototologyClient({ apiKey: TEST_KEY, baseUrl: 'https://api.test' });
+      const err = await client.modules().then(() => null, (e: unknown) => e);
+      expect(err).toBeInstanceOf(RateLimitedError);
+      expect((err as RateLimitedError).retryAfterSeconds).toBeGreaterThan(DAY_S - 60);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('a 429 with Retry-After 2 still waits and retries, as before', async () => {
+      mockFetch.mockResolvedValueOnce(mockJsonResponse(429, {
+        error: { code: 'RATE_LIMITED', message: 'slow down', retryable: true, requestId: 'req_rl' },
+      }, { 'retry-after': '2' }));
+      mockFetch.mockResolvedValueOnce(mockJsonResponse(200, { modules: [], presets: [] }));
+
+      const client = new PhototologyClient({ apiKey: TEST_KEY, baseUrl: 'https://api.test' });
+      const startMs = Date.now();
+      await client.modules();
+      expect(Date.now() - startMs).toBeGreaterThanOrEqual(1900);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    }, 10_000);
+
+    it('honours a custom maxRateLimitWaitMs', async () => {
+      mockFetch.mockResolvedValue(mockJsonResponse(429, {
+        error: { code: 'RATE_LIMITED', message: 'slow down', retryable: true, requestId: 'req_rl' },
+      }, { 'retry-after': '2' }));
+
+      const client = new PhototologyClient({ apiKey: TEST_KEY, baseUrl: 'https://api.test', maxRateLimitWaitMs: 1000 });
+      const startMs = Date.now();
+      await expect(client.modules()).rejects.toBeInstanceOf(RateLimitedError);
+      expect(Date.now() - startMs).toBeLessThan(500);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('the pre-request rate-limit wait counts against maxElapsedMs', () => {
+    afterEach(() => jest.useRealTimers());
+
+    function neverAnswers(_url: unknown, init?: RequestInit): Promise<Response> {
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          const e = new Error('aborted');
+          e.name = 'AbortError';
+          reject(e);
+        });
+      });
+    }
+
+    it('a 9 s pre-sleep plus a stalled API times out by maxElapsedMs, not 9 s later', async () => {
+      jest.useFakeTimers();
+      const client = new PhototologyClient({ apiKey: TEST_KEY, baseUrl: 'https://api.test', maxElapsedMs: 20_000, maxRetries: 0 });
+      mockFetch.mockResolvedValueOnce(mockJsonResponse(200, { modules: [], presets: [] }, {
+        'x-ratelimit-remaining': '0',
+        'x-ratelimit-reset': String(Math.ceil(Date.now() / 1000) + 9),
+      }));
+      await client.modules();
+      mockFetch.mockImplementation(neverAnswers as unknown as typeof fetch);
+
+      let settledAt: number | undefined;
+      let error: unknown;
+      const start = Date.now();
+      void client.modules().catch((e) => { error = e; settledAt = Date.now() - start; });
+
+      await jest.advanceTimersByTimeAsync(20_500);
+      expect(settledAt).toBeDefined();
+      expect(settledAt!).toBeLessThanOrEqual(20_500);
+      expect((error as PhototologyError).code).toBe('TIMEOUT');
+    });
+
+    it('with no rate-limit state, a 500 ms budget still sends exactly one request', async () => {
+      mockFetch.mockResolvedValueOnce(mockJsonResponse(200, { modules: [], presets: [] }));
+      const client = new PhototologyClient({ apiKey: TEST_KEY, baseUrl: 'https://api.test', maxElapsedMs: 500 });
+      await expect(client.modules()).resolves.toEqual({ modules: [], presets: [] });
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('a sleep that overran the budget throws without sending; retryAfterSeconds comes from the real reset', async () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(1_800_000_000_000);
+      const client = new PhototologyClient({ apiKey: TEST_KEY, baseUrl: 'https://api.test', maxElapsedMs: 5_000 });
+      mockFetch.mockResolvedValueOnce(mockJsonResponse(200, { modules: [], presets: [] }, {
+        'x-ratelimit-remaining': '0',
+        'x-ratelimit-reset': String(1_800_000_003), // a 3 s wait: 2 s of budget would be left
+      }));
+      await client.modules();
+
+      let error: unknown;
+      void client.modules().catch((e) => { error = e; });
+      // The machine stalls for 2.5 s mid-sleep (a slow timer), so the sleep ends 5.5 s in.
+      jest.setSystemTime(1_800_000_002_500);
+      await jest.advanceTimersByTimeAsync(3_000);
+
+      expect(error).toBeInstanceOf(RateLimitedError);
+      // The window has already reset: retrying is possible now, not in a made-up second.
+      expect((error as RateLimitedError).retryAfterSeconds).toBe(0);
+      expect((error as RateLimitedError).message).toMatch(/maxElapsedMs/);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('a 4 999 ms wait inside a 5 000 ms budget throws RateLimitedError naming maxElapsedMs, without sending', async () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(1_800_000_000_001); // 1 ms past a whole second, so the reset below is 4 999 ms away
+      const client = new PhototologyClient({ apiKey: TEST_KEY, baseUrl: 'https://api.test', maxElapsedMs: 5_000 });
+      mockFetch.mockResolvedValueOnce(mockJsonResponse(200, { modules: [], presets: [] }, {
+        'x-ratelimit-remaining': '0',
+        'x-ratelimit-reset': String(1_800_000_005),
+      }));
+      await client.modules();
+
+      let error: unknown;
+      void client.modules().catch((e) => { error = e; });
+      await jest.advanceTimersByTimeAsync(10);
+      expect(error).toBeInstanceOf(RateLimitedError);
+      expect((error as RateLimitedError).message).toMatch(/maxElapsedMs/);
+      expect((error as RateLimitedError).message).not.toMatch(/maxRateLimitWaitMs/);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('a pre-sleep as long as maxElapsedMs throws RateLimitedError without sending', async () => {
+      const client = new PhototologyClient({ apiKey: TEST_KEY, baseUrl: 'https://api.test', maxElapsedMs: 5_000 });
+      mockFetch.mockResolvedValueOnce(mockJsonResponse(200, { modules: [], presets: [] }, {
+        'x-ratelimit-remaining': '0',
+        'x-ratelimit-reset': String(Math.ceil(Date.now() / 1000) + 9),
+      }));
+      await client.modules();
+      const start = Date.now();
+      const err = await client.modules().then(() => null, (e: unknown) => e);
+      expect(err).toBeInstanceOf(RateLimitedError);
+      expect((err as RateLimitedError).message).toMatch(/maxElapsedMs/);
+      expect(Date.now() - start).toBeLessThan(500);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
     });
   });
 

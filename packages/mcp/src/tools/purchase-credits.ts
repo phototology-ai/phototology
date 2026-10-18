@@ -26,7 +26,7 @@ export function registerPurchaseCredits(server: McpServer): void {
       description: [
         'Get a deep-link the user can open in their browser to buy more Phototology credits. Free. Does not bill credits.',
         '',
-        'When to use: when `get_credits` shows the account is low or out, or when an `analyze_photo` / `analyze_batch` call returns an out-of-credits error (its `structuredContent.actions[0].url` is the same wallet link).',
+        'When to use: when `get_credits` shows the account is low or out, or when an `analyze_photo` / `analyze_batch` call returns an out-of-credits error (its `actionUrl` is the same wallet link).',
         '',
         'When NOT to use: do not call speculatively. This tool cannot complete a purchase (Stripe needs a browser), so calling it without a real credit need just hands the user a dead-end link. It does not bill and does not change the balance.',
         '',

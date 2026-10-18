@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { type PhototologyClient, type LookupResult, LENS_FIELDS, PRESET_IDS, type LensId } from '@phototology/sdk';
+import { type PhototologyClient, type LookupResult, PRESET_IDS, type LensId } from '@phototology/sdk';
+import { SELECTABLE_LENS_IDS } from '../lib/lens-ids';
 import { renderToolError } from './errors';
 import { readLocalImage, expandGlobs, validateBase64, LocalImageError, assertNotHeic, detectBase64Format } from '../lib/local-image';
 import {
@@ -8,14 +9,8 @@ import {
 } from '../lib/envelope';
 import { AnalyzeBatchOutputSchema, type AnalyzeBatchOutput, type AnalyzePhotoOutput } from '../schemas';
 
-// `vehicle-condition` lives in LENS_FIELDS (it owns output) but is STACK-ONLY:
-// the API rejects it on direct selection as an INTERNAL_MODULE
-// (phototology-api/src/services/moduleComposition.ts INTERNAL_MODULES). Exclude
-// it from the directly-selectable `lenses` enum so we never offer a lens the
-// server will refuse. (2.0.0 Pillar B: the SDK should own this list.)
-const INTERNAL_LENS_IDS = new Set<string>(['vehicle-condition']);
-const LENS_IDS = (Object.keys(LENS_FIELDS) as LensId[])
-  .filter((id) => !INTERNAL_LENS_IDS.has(id)) as [LensId, ...LensId[]];
+// Stack-only lenses (vehicle-condition) stay out of the selectable enum.
+const LENS_IDS = SELECTABLE_LENS_IDS;
 
 /** Hard cap per tool call. For larger jobs, the agent loops the tool. */
 const MAX_BATCH = 200;

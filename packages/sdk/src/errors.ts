@@ -104,13 +104,21 @@ export class ValidationError extends PhototologyError {
   }
 }
 
+/**
+ * Thrown on a 429, and without sending a request when the client already knows
+ * the rate-limit window will not reset within `maxRateLimitWaitMs`.
+ */
 export class RateLimitedError extends PhototologyError {
+  /** Seconds until the limit resets, when known. Same value as `retryAfterSeconds`. */
   readonly retryAfter?: number;
+  /** Seconds until the limit resets, when known. */
+  readonly retryAfterSeconds?: number;
 
   constructor(message: string, options: PhototologyErrorOptions, retryAfter?: number) {
     super(message, options);
     this.name = 'RateLimitedError';
     this.retryAfter = retryAfter;
+    this.retryAfterSeconds = retryAfter;
   }
 }
 
@@ -186,4 +194,18 @@ export class CreditExhaustedError extends PlanLimitError {
     this.resetsInDays = options.resetsInDays;
     this.purchaseUrl = options.purchaseUrl ?? DEFAULT_PURCHASE_URL;
   }
+}
+
+/** "45 seconds", "12 minutes", "24 hours": a wait a person can read. */
+export function describeWait(seconds: number): string {
+  if (seconds < 120) return `${seconds} second${seconds === 1 ? '' : 's'}`;
+  if (seconds < 2 * 60 * 60) return `${Math.round(seconds / 60)} minutes`;
+  return `${Math.round(seconds / 3600)} hours`;
+}
+
+/** The sentence appended to a rate-limit message: when it resets, and why the client did not wait. */
+export function rateLimitResetSentence(seconds: number, maxWaitMs: number): string {
+  const at = new Date(Date.now() + seconds * 1000).toISOString();
+  return `The limit resets in ${describeWait(seconds)} (at ${at}). ` +
+    `The client waits at most ${Math.round(maxWaitMs / 1000)} seconds for a reset (maxRateLimitWaitMs), so it did not send the request.`;
 }

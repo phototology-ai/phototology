@@ -361,7 +361,8 @@ const client = new PhototologyClient({
   baseUrl: 'https://...',      // Default: https://api.phototology.com
   maxRetries: 3,               // Default: 3 (retries on retryable errors)
   timeout: 30_000,             // Default: 30s per attempt
-  maxElapsedMs: 90_000,        // Default: 90s overall budget (all attempts + backoff); 0 to disable
+  maxElapsedMs: 90_000,        // Default: 90s overall budget (rate-limit wait, attempts and backoff); 0 to disable
+  maxRateLimitWaitMs: 10_000,  // Default: 10s; the longest the client waits for a rate-limit reset
 });
 ```
 
@@ -409,7 +410,7 @@ if (result.outputSchema === 'photo') {
 
 ## Built-in Retry
 
-The SDK automatically retries on retryable errors (429, 502, 500 with `PARSE_FAILED`) with exponential backoff. Rate limit headers (`x-ratelimit-remaining`, `x-ratelimit-reset`) are respected for pre-emptive backoff.
+The SDK automatically retries on retryable errors (429, 502, 500 with `PARSE_FAILED`) with exponential backoff. Rate limit headers (`x-ratelimit-remaining`, `x-ratelimit-reset`) are respected for pre-emptive backoff, and a 429's `Retry-After` is waited out, but never longer than `maxRateLimitWaitMs` (default 10 s) and always inside `maxElapsedMs`. A longer wait is not slept: the call throws `RateLimitedError` at once, without sending the request, with `retryAfterSeconds` set to the seconds until the limit resets.
 
 ## Lens reference
 

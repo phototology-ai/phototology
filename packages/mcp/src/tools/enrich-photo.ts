@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { PhototologyClient, EnrichResponse } from '@phototology/sdk';
-import { renderToolError } from './errors';
+import { renderToolError, sandboxRefusal } from './errors';
 import { readLocalImage, resolvePath, validateBase64, assertWritableOutput, writeOutputFile, LocalImageError } from '../lib/local-image';
 import { toEnrichEnvelope } from '../lib/envelope';
 import { makePreview } from '../lib/preview';
@@ -119,6 +119,8 @@ export function registerEnrichPhoto(server: McpServer, client: PhototologyClient
       },
     },
     async ({ imageUrl, imageBase64, imagePath, formats, outputPath, overwrite, breakCredentials }: EnrichArgs) => {
+      const refusal = await sandboxRefusal();
+      if (refusal) return refusal;
       try {
         // Refinement: exactly one image input mode.
         const inputCount = [imageUrl, imageBase64, imagePath].filter(
@@ -202,20 +204,23 @@ export function registerEnrichPhoto(server: McpServer, client: PhototologyClient
               writeOutputFile(sidecarTarget, Buffer.from(xmp, 'utf8'), overwrite === true, SIDECAR_LABEL);
             } catch (err: unknown) {
               if (!(err instanceof LocalImageError)) throw err;
-              // Charged already: hand back the packet (text and structuredContent.sidecar) so the paid work is not lost.
-              const failed = {
-                error: {
-                  code: err.code,
-                  message: `The sidecar was not saved: ${err.message} The XMP packet is returned below as sidecar.xmp.`,
-                  path: sidecarPath,
-                },
-                ...base,
-                note: sidecarNote('returned below', resolvedOutputPath),
+              // Charged already: hand back the packet so the paid work is not lost. Text only,
+              // like every error result (tools/errors.ts): the official client validates
+              // structuredContent against the outputSchema even when isError is true. The first
+              // line is JSON (the packet's newlines are escaped there), the sentence follows.
+              const fields = {
+                code: err.code,
+                retryable: false,
+                sidecarPath,
+                sidecar: { xmp },
+                creditsCharged: base.usage.creditsCharged,
                 ...where,
               };
+              const sentence = `The sidecar was not saved: ${err.message} ` +
+                'The XMP packet is in sidecar.xmp on the first line; save it yourself, or call again with overwrite: true. ' +
+                sidecarNote('returned on the first line', resolvedOutputPath);
               return {
-                content: [{ type: 'text' as const, text: JSON.stringify(failed, null, 2) }],
-                structuredContent: failed,
+                content: [{ type: 'text' as const, text: `${JSON.stringify(fields)}\n${sentence}` }],
                 isError: true as const,
               };
             }

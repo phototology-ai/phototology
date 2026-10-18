@@ -1,5 +1,7 @@
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { PhototologyClient } from '@phototology/sdk';
+import { AuthenticationError, type PhototologyClient } from '@phototology/sdk';
+import { getKeyStatus } from '../lib/key-status';
+import { sandboxKeyText, sandboxRefusal } from '../tools/errors';
 import { reshapeForMcp } from '../tools/list-lenses';
 import { toLookupEnvelope } from '../lib/envelope';
 
@@ -50,8 +52,21 @@ export function registerResources(server: McpServer, client: PhototologyClient):
       // A value that is not a SHA-256 cannot be in the registry: answer locally, no API call.
       if (typeof value !== 'string' || !SHA256_HEX.test(value)) return notInRegistry;
       const sha256 = value.toLowerCase();
+      if (await sandboxRefusal()) {
+        return { contents: [{ uri: uri.href, mimeType: 'text/plain', text: sandboxKeyText() }] };
+      }
       // Row 6 switches this to client.getPhoto.
-      const res = await client.lookup({ sha256 });
+      let res;
+      try {
+        res = await client.lookup({ sha256 });
+      } catch (err) {
+        // A sandbox key cannot read the registry: say so as the resource text,
+        // as the tools do, rather than as a bare -32603 protocol error.
+        if (err instanceof AuthenticationError && getKeyStatus().sandbox) {
+          return { contents: [{ uri: uri.href, mimeType: 'text/plain', text: sandboxKeyText() }] };
+        }
+        throw err;
+      }
       const { envelope } = toLookupEnvelope(res, sha256);
       if (envelope.matchType === 'none') return notInRegistry;
       return {

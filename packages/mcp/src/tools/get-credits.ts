@@ -1,6 +1,6 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { PhototologyClient, UsageResponse } from '@phototology/sdk';
-import { renderToolError } from './errors';
+import { renderToolError, sandboxRefusal } from './errors';
 import { usdFromCredits } from '../lib/envelope';
 import { GetCreditsOutputSchema, type GetCreditsOutput } from '../schemas';
 
@@ -44,6 +44,8 @@ export function registerGetCredits(server: McpServer, client: PhototologyClient)
       },
     },
     async () => {
+      const refusal = await sandboxRefusal();
+      if (refusal) return refusal;
       try {
         const envelope = toCreditsEnvelope(await client.usage());
         return {

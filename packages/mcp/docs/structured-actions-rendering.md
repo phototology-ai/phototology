@@ -1,3 +1,5 @@
+> **Superseded 2026-10-18.** Tool error results no longer carry `structuredContent`: `@modelcontextprotocol/sdk` 1.32's client validates it against the tool's `outputSchema` even when `isError` is true, which turned every error into a -32602. The wallet link now travels as `actionUrl` in the JSON first line of the error text. The notes below describe the earlier design.
+
 # How the `structuredContent.actions` payload renders today
 
 > **TL;DR:** the **text fallback** is the load-bearing thing today. The structured `actions` payload is harmless future-proofing for clients that haven't implemented it yet (and may never).

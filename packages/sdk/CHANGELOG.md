@@ -20,11 +20,13 @@
 - **Both pHash forms on lookup.** `LookupRequest.pHash` accepts the 64-character bit string that analyze and lookup return, or the same 64 bits as 16 hex characters.
 - **`EnrichResponse.registryId?`**: the registry id written into the enriched file's XMP (the sha256 of the original bytes), so a later lookup can find the photo from what is written in it. Present only when the write stored it.
 - **Savings on analyze usage.** `AnalyzeUsage.creditsSaved?` counts billable lens runs served from the cache instead of charged (0 on a fresh run). `AnalyzeUsage.usd?` gives `{ charged, saved }` as dollar strings with two decimals, at $0.01 per credit.
+- **`RateLimitedError.retryAfterSeconds`**: seconds until the limit resets, when known (the same value as `retryAfter`).
 
 ### Changed
 - **`EnrichRequest.preserveCredentials?`** (default `true`) is always sent, so the API never treats a 2.0.0 client as one that predates sidecar mode.
 - **`EnrichResponse`** gains `mode: 'file' | 'sidecar'`, `sidecar?`, `reason?`, `warnings?` (`CREDENTIAL_INVALIDATED`, `CREDENTIALS_UNREAD`) and `credentials: CredentialsReport`. `imageBase64` is now optional, present only when `mode` is `'file'`. Code that reads `result.imageBase64` as a `string` must check `mode` first; under `strict` TypeScript this is a compile error until it does.
 - **`SDK_VERSION` constant bumped to `2.0.0`** (`src/client.ts`), matching `package.json`, so the `User-Agent` header reports the right version.
+- **Rate-limit waits are capped at `maxRateLimitWaitMs`** (new option, default 10,000 ms). Before, a 200 that reported `x-ratelimit-remaining: 0` made the next call sleep until `x-ratelimit-reset`, which on a daily window was up to 24 hours, and a 429 waited out its `Retry-After` up to the 90 s budget. Now a wait longer than the cap is not slept: the call throws `RateLimitedError` at once, without sending the request, with `retryAfterSeconds` and a message that names the limit and when it resets. A 429 on an exhausted window uses `x-ratelimit-reset` when that is later than `Retry-After`. Shorter waits are still slept and retried as before. The wait counts against `maxElapsedMs`: a wait that would leave the request 1 s or less of it throws instead (the message names `maxElapsedMs`), and the request gets only the time left. The plain retry backoff is also clamped to `maxElapsedMs` now (one backoff could sleep past it).
 
 ## 1.3.0 (2026-06-02)
 

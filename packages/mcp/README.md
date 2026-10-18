@@ -131,7 +131,13 @@ Per-image cap: 10MB raw. Batch cap: 200 inputs total per call. Supported formats
 
 ### Claude Code
 
-`~/.claude/settings.json`:
+Run this once in a terminal:
+
+```bash
+claude mcp add phototology --scope user -e PHOTOTOLOGY_API_KEY=pt_live_... -- npx -y @phototology/mcp
+```
+
+That writes the server into `~/.claude.json`, so every project sees it. Use `--scope project` instead to write `.mcp.json` at the project root and share it with the repo. Both files take this shape if you edit them by hand:
 
 ```json
 {
@@ -319,13 +325,13 @@ Phototology remembers every photo per account, keyed by perceptual hash. The sec
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `PHOTOTOLOGY_API_KEY` | Yes | Your API key (`pt_live_...` or `pt_test_...`). |
+| `PHOTOTOLOGY_API_KEY` | Yes | Your API key (`pt_live_...` or `pt_test_...`). Sign up for an account key at https://phototology.com/signup. |
 | `PHOTOTOLOGY_BASE_URL` | No | API base URL. Default: `https://api.phototology.com`. |
 | `PHOTOTOLOGY_MCP_NO_TELEMETRY` | No | Set to `1` to disable anonymous client-discovery telemetry (see below). |
 | `DO_NOT_TRACK` | No | Set to `1` to disable telemetry. Same effect as `PHOTOTOLOGY_MCP_NO_TELEMETRY`; it follows the cross-tool convention many CLIs honor. |
 | `PHOTOTOLOGY_MCP_ALLOWED_DIRS` | No | Folders the server may read photos from and write enriched copies to, separated by `:` (`;` on Windows), for example `/Users/me/Pictures:/Volumes/Archive`. Unset means any local path. Paths are checked after symlinks are resolved, so a link inside an allowed folder that points elsewhere is refused with `PATH_OUTSIDE_ALLOWED_DIRS`. |
 
-Keys starting with `pt_test_` use the test sandbox (instant responses, zero cost, golden fixtures).
+Keys starting with `pt_test_` use the test sandbox (instant responses, zero cost, golden fixtures). The sandbox allows 2 requests a minute and 10 a day per IP; past that, tools return a `RATE_LIMITED` error with `retryAfterSeconds` instead of waiting. Every tool error from the API starts with one line of JSON (`code`, `retryable`, and fields such as `retryAfterSeconds` or `actionUrl`), followed by a sentence; error results carry no `structuredContent`. A sandbox key cannot read the registry or a balance, or write metadata into a photo: `lookup_photo`, `get_credits` and `enrich_photo` return a `SANDBOX_KEY` error. Sign up for an account key at https://phototology.com/signup for those.
 
 ### Anonymous telemetry
 
