@@ -1,21 +1,39 @@
 name: Publish to npm (with provenance)
 
-# Manual, deliberate publish of the public Phototology packages WITH npm
-# provenance (a cryptographic attestation linking each tarball to this public
-# commit + this workflow run). Provenance is the main lever on the npm/Socket
-# Supply-Chain score and removes the "published from someone's laptop" gap.
+# Manual, deliberate publish of the public Phototology packages from this public
+# repo, with npm trusted publishing (OIDC) and provenance: each tarball carries
+# a signed attestation linking it to this commit and this workflow run, and no
+# npm token exists anywhere.
 #
-# Versions come from each package.json — bump them in the private monorepo; they
-# sync here. This workflow only builds + publishes the current versions.
+# Each published package also gets a GitHub release (tag <short>-v<version>)
+# with a CycloneDX SBOM (sbom.cdx.json) of the packed tarball. The
+# @phototology/mcp release adds tools-list.sha256, the sha256 of the server's
+# canonical tools/list result, and publishing mcp also submits
+# packages/mcp/server.json to the official MCP Registry as com.phototology/mcp.
 #
-# Prerequisites (one-time):
-#   - Repo secret NPM_TOKEN = an npm "Automation" access token with publish
-#     rights on @phototology/* and phototology.
-#   - This repo is public and each package's package.json `repository.url`
-#     points here (required for provenance to verify).
+# Jobs are split by trust boundary. Only `build` runs dependency code (pnpm
+# install, the build, the SBOM tool, the hash script), and it holds nothing but
+# read access. `publish` holds the OIDC token that can mint an npm publish
+# credential and runs no installed or third-party code: setup-node (Node 24
+# and its bundled npm), the artifact from `build`, `npm publish`. `release` holds write access
+# to this repo and only runs `gh release create`. `registry` only downloads a
+# checksummed mcp-publisher and publishes server.json.
 #
-# Source of truth for this file: nlakios monorepo scripts/public-mirror/.
-# Edit it there and re-run scripts/public-mirror/deploy.sh — not here directly.
+# Versions come from each package.json: bump them in the private monorepo; they
+# sync here. This workflow only builds and publishes the current versions.
+#
+# Prerequisites (one-time, see docs/runbooks/npm-provenance-publishing.md in
+# the monorepo):
+#   - On npmjs.com, each package (@phototology/sdk, @phototology/mcp,
+#     phototology) lists this repo + workflow file (release.yml) as a trusted
+#     publisher.
+#   - Repo secret MCP_REGISTRY_PRIVATE_KEY (hex Ed25519 key) and the matching
+#     TXT record on phototology.com for the MCP Registry job. Until both
+#     exist that job fails without failing the run, and prints the record.
+#   - This repo is public and each package's repository.url points here.
+#
+# Source of truth for this file lives in the upstream private monorepo.
+# Edit it there and re-run the deploy script, not here directly.
 
 on:
   workflow_dispatch:
@@ -31,24 +49,36 @@ on:
           - phototology
           - all
 
-permissions:
-  contents: read
-  id-token: write # REQUIRED: lets npm mint the provenance attestation via OIDC
+# Nothing by default; each job asks for exactly what it needs.
+permissions: {}
+
+env:
+  # The choice input, read by run blocks from the environment (never interpolated).
+  PACKAGE: ${{ inputs.package }}
+  # Pinned tool versions. Bump deliberately.
+  CYCLONEDX_NPM_VERSION: "6.0.1"
+  MCP_PUBLISHER_VERSION: "1.8.1"
+  # sha256 of mcp-publisher_linux_amd64.tar.gz, from registry_1.8.1_checksums.txt
+  MCP_PUBLISHER_SHA256: "a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc"
 
 jobs:
-  publish:
+  # Installs, builds, packs, and writes the release attachments. Read-only.
+  build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      # No `version:` here on purpose — action-setup reads the pinned
+      # No `version:` here on purpose: action-setup reads the pinned
       # packageManager field from package.json (passing both errors out).
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
-          registry-url: "https://registry.npmjs.org"
 
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
@@ -58,23 +88,240 @@ jobs:
           pnpm --filter @phototology/sdk build
           pnpm --filter @phototology/mcp build
 
-      - name: Publish with provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Pack, SBOM, tools-list hash
         run: |
           set -euo pipefail
-          publish_one() {
-            local name="$1" out
-            out="$(mktemp -d "${RUNNER_TEMP}/pack.XXXXXX")"
-            # pnpm pack rewrites workspace:* deps to the real version in the tarball
-            # (npm publish would NOT) — verified: @phototology/mcp -> @phototology/sdk@1.2.0.
-            pnpm --filter "${name}" pack --pack-destination "${out}"
-            # npm (not pnpm) mints the provenance attestation for the prebuilt tarball.
-            npm publish "${out}"/*.tgz --provenance --access public
+          out="${RUNNER_TEMP}/release"
+          mkdir -p "${out}"
+
+          # <short>/package.tgz, <short>/version, <short>/sbom.cdx.json,
+          # and mcp/tools-list.sha256.
+          pack_one() {
+            local name="$1" short="$2" dir="$3" d
+            d="${out}/${short}"
+            mkdir -p "${d}" "${d}.pack"
+            # pnpm pack rewrites workspace:* deps to the real version in the
+            # tarball (npm publish would NOT): @phototology/mcp -> @phototology/sdk@<x.y.z>.
+            pnpm --filter "${name}" pack --pack-destination "${d}.pack"
+            mv "${d}.pack"/*.tgz "${d}/package.tgz"
+            rmdir "${d}.pack"
+            node -p "require('./${dir}/package.json').version" > "${d}/version"
           }
-          case "${{ inputs.package }}" in
-            sdk)         publish_one @phototology/sdk ;;
-            mcp)         publish_one @phototology/mcp ;;
-            phototology) publish_one phototology ;;
-            all)         publish_one @phototology/sdk; publish_one @phototology/mcp; publish_one phototology ;;
+
+          # SBOM of exactly what ships: unpack the tarball, install its
+          # production dependencies with npm, describe that tree.
+          sbom_one() {
+            local short="$1" d work sdk_version
+            d="${out}/${short}"
+            work="$(mktemp -d "${RUNNER_TEMP}/sbom-${short}.XXXXXX")"
+            tar -xzf "${d}/package.tgz" -C "${work}"
+            (
+              cd "${work}/package"
+              local_sdk=()
+              if [ "${short}" = mcp ]; then
+                # The mcp tarball pins an exact sdk version. When `all` is
+                # publishing that version in this same run it is not on npm
+                # yet, so satisfy it from the sdk tarball packed above
+                # (--no-save leaves package.json as published).
+                sdk_version="$(node -p "require('./package.json').dependencies['@phototology/sdk']")"
+                if [ -z "$(npm view "@phototology/sdk@${sdk_version}" version 2>/dev/null)" ]; then
+                  if [ -f "${out}/sdk/package.tgz" ] && [ "$(cat "${out}/sdk/version")" = "${sdk_version}" ]; then
+                    local_sdk=("${out}/sdk/package.tgz")
+                  else
+                    echo "::error::@phototology/sdk@${sdk_version} is not on npm. Publish the sdk first, or choose 'all'."
+                    exit 1
+                  fi
+                fi
+              fi
+              npm install --omit=dev --ignore-scripts --no-audit --no-fund --no-save ${local_sdk[@]+"${local_sdk[@]}"}
+              # A package with no dependencies (sdk, phototology) gets no
+              # node_modules; the SBOM tool then needs a lockfile instead.
+              if [ ! -d node_modules ]; then
+                npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+              fi
+              npx --yes "@cyclonedx/cyclonedx-npm@${CYCLONEDX_NPM_VERSION}" \
+                --omit dev --output-file "${d}/sbom.cdx.json"
+            )
+          }
+
+          case "${PACKAGE}" in
+            sdk)         pack_one @phototology/sdk sdk packages/sdk ;;
+            mcp)         pack_one @phototology/mcp mcp packages/mcp ;;
+            phototology) pack_one phototology phototology packages/phototology ;;
+            all)
+              pack_one @phototology/sdk sdk packages/sdk
+              pack_one @phototology/mcp mcp packages/mcp
+              pack_one phototology phototology packages/phototology
+              ;;
           esac
+          for short in sdk mcp phototology; do
+            if [ -d "${out}/${short}" ]; then sbom_one "${short}"; fi
+          done
+          if [ -d "${out}/mcp" ]; then
+            node packages/mcp/scripts/tools-list-hash.mjs > "${out}/mcp/tools-list.sha256"
+            echo "tools-list sha256: $(cat "${out}/mcp/tools-list.sha256")"
+          fi
+          find "${out}" -type f | sort
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-files
+          path: ${{ runner.temp }}/release
+          if-no-files-found: error
+          retention-days: 30
+
+  # Holds the OIDC token. Runs no installed or third-party code.
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm trusted publishing + provenance, via OIDC
+    steps:
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          # Node 24 bundles npm 11, which supports trusted publishing, so
+          # nothing is installed while this job holds the OIDC token.
+          node-version: 24
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Require npm >= 11.5.1 (first version with trusted publishing)
+        run: |
+          set -euo pipefail
+          v="$(npm --version)"
+          echo "npm ${v}"
+          # A prerelease of 11.5.1 itself counts as older.
+          node -e '
+            const v = process.argv[1];
+            const m = /^(\d+)\.(\d+)\.(\d+)(-.+)?$/.exec(v);
+            const n = m ? [+m[1], +m[2], +m[3]] : [0, 0, 0];
+            const cmp = n[0] - 11 || n[1] - 5 || n[2] - 1;
+            if (!m || cmp < 0 || (cmp === 0 && m[4])) {
+              console.error("::error::npm " + v + " is older than 11.5.1 and cannot use trusted publishing");
+              process.exit(1);
+            }
+          ' "${v}"
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-files
+          path: ${{ runner.temp }}/release
+
+      - name: Publish with provenance (no token)
+        run: |
+          set -euo pipefail
+          out="${RUNNER_TEMP}/release"
+          # The tarball must be the package and version the build recorded.
+          publish_one() {
+            local name="$1" short="$2" tgz version actual
+            tgz="${out}/${short}/package.tgz"
+            version="$(cat "${out}/${short}/version")"
+            [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "::error::bad version '${version}'"; exit 1; }
+            actual="$(tar -xzOf "${tgz}" package/package.json | node -e 'const p=JSON.parse(require("fs").readFileSync(0,"utf8"));process.stdout.write(p.name+"@"+p.version)')"
+            [ "${actual}" = "${name}@${version}" ] || { echo "::error::${tgz} is ${actual}, expected ${name}@${version}"; exit 1; }
+            # --ignore-scripts: the tarball is already built; no lifecycle script runs here.
+            npm publish "${tgz}" --provenance --access public --ignore-scripts
+          }
+          case "${PACKAGE}" in
+            sdk)         publish_one @phototology/sdk sdk ;;
+            mcp)         publish_one @phototology/mcp mcp ;;
+            phototology) publish_one phototology phototology ;;
+            all)
+              publish_one @phototology/sdk sdk
+              publish_one @phototology/mcp mcp
+              publish_one phototology phototology
+              ;;
+          esac
+
+  # Holds write access to this repo. Only creates the GitHub releases.
+  release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # gh release create
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-files
+          path: ${{ runner.temp }}/release
+
+      - name: Create GitHub releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          out="${RUNNER_TEMP}/release"
+          release_one() {
+            local name="$1" short="$2" version notes
+            version="$(cat "${out}/${short}/version")"
+            [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "::error::bad version '${version}'"; exit 1; }
+            local assets=("${out}/${short}/sbom.cdx.json")
+            notes="${name}@${version} on npm: https://www.npmjs.com/package/${name}/v/${version}. Attached: sbom.cdx.json (CycloneDX SBOM of the published tarball)"
+            if [ "${short}" = mcp ]; then
+              assets+=("${out}/mcp/tools-list.sha256")
+              notes="${notes}, tools-list.sha256 (sha256 of the canonical tools/list result; reproduce with node packages/mcp/scripts/tools-list-hash.mjs after building)"
+            fi
+            gh release create "${short}-v${version}" "${assets[@]}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --target "${GITHUB_SHA}" \
+              --title "${name} ${version}" \
+              --notes "${notes}."
+          }
+          case "${PACKAGE}" in
+            sdk)         release_one @phototology/sdk sdk ;;
+            mcp)         release_one @phototology/mcp mcp ;;
+            phototology) release_one phototology phototology ;;
+            all)
+              release_one @phototology/sdk sdk
+              release_one @phototology/mcp mcp
+              release_one phototology phototology
+              ;;
+          esac
+
+  # The MCP Registry authenticates the com.phototology namespace by a DNS TXT
+  # record on phototology.com. Until the secret and the record exist this job
+  # fails without failing the run, and prints what to add.
+  registry:
+    needs: publish
+    if: inputs.package == 'mcp' || inputs.package == 'all'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Publish server.json to the MCP Registry
+        env:
+          MCP_REGISTRY_PRIVATE_KEY: ${{ secrets.MCP_REGISTRY_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          bin="${RUNNER_TEMP}/mcp-publisher"
+          mkdir -p "${bin}"
+          archive="${bin}/mcp-publisher_linux_amd64.tar.gz"
+          curl -fsSL -o "${archive}" \
+            "https://github.com/modelcontextprotocol/registry/releases/download/v${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz"
+          echo "${MCP_PUBLISHER_SHA256}  ${archive}" | sha256sum -c -
+          tar -xzf "${archive}" -C "${bin}" mcp-publisher
+
+          if [ -z "${MCP_REGISTRY_PRIVATE_KEY}" ]; then
+            echo "::error::Repo secret MCP_REGISTRY_PRIVATE_KEY is not set."
+            echo "Create a key:  openssl genpkey -algorithm Ed25519 -out key.pem"
+            printf '%s\n' "Secret value:  openssl pkey -in key.pem -noout -text | grep -A3 'priv:' | tail -n +2 | tr -d ' :\n'"
+            echo "TXT record:    phototology.com. IN TXT \"v=MCPv1; k=ed25519; p=\$(openssl pkey -in key.pem -pubout -outform DER | tail -c 32 | base64)\""
+            exit 1
+          fi
+
+          # Derive the public key from the hex private key (32-byte Ed25519
+          # seed wrapped in its PKCS#8 DER prefix) and print the record the
+          # registry will look for.
+          pub="$(printf '302e020100300506032b657004220420%s' "${MCP_REGISTRY_PRIVATE_KEY}" \
+            | xxd -r -p | openssl pkey -inform DER -pubout -outform DER | tail -c 32 | base64)"
+          echo "The MCP Registry checks this TXT record on phototology.com:"
+          echo "  phototology.com. IN TXT \"v=MCPv1; k=ed25519; p=${pub}\""
+
+          "${bin}/mcp-publisher" validate packages/mcp/server.json
+          "${bin}/mcp-publisher" login dns --domain phototology.com --private-key "${MCP_REGISTRY_PRIVATE_KEY}"
+          "${bin}/mcp-publisher" publish packages/mcp/server.json
