@@ -108,10 +108,10 @@ export interface AnalyzeRequest {
   refresh?: boolean;
 }
 
-/** Photo analysis output (opaque record — fields vary by modules used). */
+/** Photo analysis output (opaque record; fields vary by modules used). */
 export type PhotoOutput = Record<string, unknown>;
 
-/** Vehicle condition output (opaque record — fields vary by modules used). */
+/** Vehicle condition output (opaque record; fields vary by modules used). */
 export type VehicleOutput = Record<string, unknown>;
 
 /** Usage information from analysis. */
@@ -333,7 +333,7 @@ export interface VehicleAnalyzeResponse extends AnalyzeResponseBase {
   output: VehicleOutput;
 }
 
-/** Discriminated union — narrows output type based on outputSchema. */
+/** Discriminated union: narrows output type based on outputSchema. */
 export type AnalyzeResponse = PhotoAnalyzeResponse | VehicleAnalyzeResponse;
 
 /** Credits payload attached to 402 PLAN_LIMIT_EXCEEDED responses. */
@@ -385,7 +385,7 @@ export interface ModuleInfo {
   billable: boolean;
   /** Default tabular projection. Each entry maps to one spreadsheet column. */
   defaultColumns: LensColumn[];
-  /** `true` if this lens is real but NOT directly selectable via `modules: []` — reachable only through a curated stack (e.g. `vehicle-condition`). Omitted for the 15 directly-selectable lenses. */
+  /** `true` if this lens is real but NOT directly selectable via `modules: []`; reachable only through a curated stack (e.g. `vehicle-condition`). Omitted for the 15 directly-selectable lenses. */
   internal?: true;
 }
 
@@ -403,14 +403,14 @@ export interface ModulesResponse {
 }
 
 /**
- * Response from GET /v1/usage — the authenticated key's credit balance.
+ * Response from GET /v1/usage: the calling key's credit balance.
  *
- * `total` is the spendable credit balance — the single number to show and
+ * `total` is the spendable credit balance: the single number to show and
  * reason about. `reserved` is the in-flight hold from running analyze calls;
  * effective spendable = `total - reserved`.
  *
  * The `community` / `purchased` breakdown is retained for back-compat (and
- * powers refund-to-origin accounting internally) — it is NOT two separate
+ * powers refund-to-origin accounting internally). It is NOT two separate
  * balances the holder manages; credits spend from the combined `total`.
  * `monthlyAllowance` and `resetsInDays` are legacy fields; the monthly
  * community-pool reset was retired in pricing v1 (cutover 2026-05-18) and
@@ -443,7 +443,7 @@ export interface UsageResponse {
     /** Non-expiring credits bought via packs. */
     balance: number;
   };
-  /** Credits held against in-flight analyze calls — subtract for spendable total. */
+  /** Credits held against in-flight analyze calls. Subtract for spendable total. */
   reserved: number;
 }
 
@@ -467,7 +467,7 @@ export interface LookupRequest {
 /**
  * A single lens index entry from the photo registry.
  *
- * Mirrors the API's `LensIndexEntry` — one entry per lens currently stored
+ * Mirrors the API's `LensIndexEntry`: one entry per lens currently stored
  * on the photo. The `eventId` points at the producing row in `lens_events`.
  */
 export interface LensIndexEntry {
@@ -480,7 +480,7 @@ export interface LensIndexEntry {
 }
 
 /**
- * Photo registry record — the persistent memory of a single photo keyed
+ * Photo registry record: the persistent memory of a single photo keyed
  * by sha256. Lens outputs are keyed by lens name (not stored as a historical
  * array).
  */
@@ -522,8 +522,8 @@ export interface LookupResult {
    * or `imagesBase64`); absent when the caller used the GET fast-path with a
    * `sha256`/`pHash` query parameter (no bytes to hash).
    *
-   * Surfacing the computed hashes on every result — even `matchType: 'none'`
-   * — lets template consumers (e.g. `@phototology/vertical-template`)
+   * Surfacing the computed hashes on every result (even `matchType: 'none'`)
+   * lets template consumers (e.g. `@phototology/vertical-template`)
    * populate per-user dedup indices on first-upload of a brand-new image,
    * so future re-uploads can be recognised without a paid analyze call.
    *
@@ -579,7 +579,7 @@ export interface LookupResponse {
  * photo MUST have been analyzed before; otherwise the API returns 404
  * `PHOTO_NOT_IN_REGISTRY`. Cost: 5 credits per call.
  *
- * c2pa signing is deferred — see Phototology API docs.
+ * c2pa signing is deferred; see Phototology API docs.
  */
 export interface EnrichRequest {
   /** Image URL (server fetches). Mutually exclusive with `imageBase64`. */
@@ -652,7 +652,7 @@ export interface EnrichResponse {
     requestId: string;
     processingTimeMs: number;
     creditsCharged: number;
-    /** EU AI Act Art. 50 transparency flag — always `true`. */
+    /** EU AI Act Art. 50 transparency flag, always `true`. */
     ai_generated: true;
   };
 }

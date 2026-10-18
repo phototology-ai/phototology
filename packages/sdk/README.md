@@ -235,7 +235,9 @@ const result = await client.enrich({
   formats: ['exif', 'iptc', 'xmp'],          // at least one required
 });
 
-result.imageBase64;     // Enriched photo bytes, base64-encoded
+result.mode;            // 'file', or 'sidecar' when the photo carries a valid content credential
+result.imageBase64;     // Enriched photo bytes, base64-encoded ('file' only)
+result.sidecar?.xmp;    // XMP packet to save beside the original as <file>.xmp ('sidecar' only)
 result.formatsWritten;  // Formats actually written (subset of requested)
 result.lensVersions;    // { lensName: version } embedded into the file
 result.sha256;          // SHA-256 of the ORIGINAL input bytes
@@ -243,6 +245,8 @@ result.meta.creditsCharged; // 5
 ```
 
 `enrich()` costs **5 credits per call and bills regardless of cache state.** It requires a prior `analyze()` on the same photo: if the image is not in the registry, it throws `ValidationError` with the message `PHOTO_NOT_IN_REGISTRY`. C2PA signing is deferred, so `formats: ['c2pa']` is rejected.
+
+When the photo carries a valid or trusted content credential, `enrich()` leaves the image untouched and returns `mode: 'sidecar'` with the metadata in `sidecar.xmp` and the reason in `reason`, because writing into the file would break the credential. Pass `preserveCredentials: false` to write into the file anyway; the response then warns `CREDENTIAL_INVALIDATED`. Billed the same either way.
 
 ### Receipts: `client.getPhoto`, `client.verifyReceipt`, `verifyReceiptSignature`
 

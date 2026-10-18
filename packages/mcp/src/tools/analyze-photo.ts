@@ -6,7 +6,7 @@ import { readLocalImage, resolvePath, validateBase64, LocalImageError } from '..
 import { toAnalyzeEnvelope, photoResourceLink, analyzedPhotoSha256 } from '../lib/envelope';
 import { AnalyzePhotoOutputSchema } from '../schemas';
 
-// `vehicle-condition` is in LENS_FIELDS (owns output) but is STACK-ONLY — the
+// `vehicle-condition` is in LENS_FIELDS (owns output) but is STACK-ONLY: the
 // API rejects it on direct selection (moduleComposition.ts INTERNAL_MODULES).
 // Keep it out of the selectable `lenses`/`modules` enum. (2.0.0 Pillar B: the
 // SDK should own this internal-lens list.)

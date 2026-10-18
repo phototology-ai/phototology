@@ -31,7 +31,7 @@ const DEFAULT_MAX_ELAPSED_MS = 90_000;
 // Bumped when a release needs to flip User-Agent reporting (see CHANGELOG).
 // Kept as a string literal rather than a package.json read so Node and edge
 // runtimes behave identically.
-const SDK_VERSION = '1.3.0';
+const SDK_VERSION = '2.0.0';
 const DEFAULT_USER_AGENT = `@phototology/sdk/${SDK_VERSION}`;
 const SHA256_HEX = /^[0-9a-fA-F]{64}$/;
 
@@ -55,7 +55,7 @@ export class PhototologyClient {
   private readonly timeout: number;
   private readonly maxElapsedMs: number;
   private readonly userAgent: string;
-  /** Unix ms timestamp — if set and in the future, delay until this time. */
+  /** Unix ms timestamp. If set and in the future, delay until this time. */
   private rateLimitResetAt: number = 0;
 
   constructor(config?: PhototologyClientConfig) {
@@ -79,7 +79,7 @@ export class PhototologyClient {
   /**
    * Analyze a photo (or multiple photos).
    *
-   * Returns a discriminated union — check `outputSchema` to narrow the output type.
+   * Returns a discriminated union: check `outputSchema` to narrow the output type.
    */
   async analyze(request: AnalyzeRequest): Promise<AnalyzeResponse> {
     // Route to v2 when bespoke extraction is requested
@@ -100,9 +100,9 @@ export class PhototologyClient {
   }
 
   /**
-   * Fetch the authenticated key's credit balance.
+   * Fetch the calling key's credit balance.
    *
-   * Free — does not bill credits. Use before a batch of analyze calls so the
+   * Free: does not bill credits. Use before a batch of analyze calls so the
    * caller can warn the user, pick a cheaper subset of lenses, or surface a
    * purchase link before hitting the out-of-credits error.
    *
@@ -119,7 +119,7 @@ export class PhototologyClient {
   /**
    * Write cached lens output into a photo's EXIF/IPTC/XMP metadata
    * blocks. The enriched bytes carry their structured intelligence in
-   * standard metadata fields any downstream tool can read — no
+   * standard metadata fields any downstream tool can read, no
    * Phototology API call needed to access the analysis after enrichment.
    *
    * Requires a prior `analyze()` call on the same photo (registry hit
@@ -136,7 +136,7 @@ export class PhototologyClient {
    * `preserveCredentials` is always sent (default `true`): the API treats a
    * request without it as a client that cannot read a sidecar.
    *
-   * c2pa signing is deferred — `formats: ['c2pa']` is rejected.
+   * c2pa signing is deferred: `formats: ['c2pa']` is rejected.
    */
   async enrich(request: EnrichRequest): Promise<EnrichResponse> {
     const response = await this.request('POST', '/v2/enrich', {

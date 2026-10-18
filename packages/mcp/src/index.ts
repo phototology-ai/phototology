@@ -15,7 +15,7 @@ import { phoneHome } from './phone-home';
  * Every MCP client (Claude Desktop, Claude Code, Cursor, Gemini CLI,
  * Windsurf, Codex, VS Code Copilot) surfaces this to its model as
  * system-level context for how to use the tools on this server. Kept
- * concise — this is prompt budget, not documentation.
+ * concise: this is prompt budget, not documentation.
  */
 export function buildServerInstructions(): string {
   const lenses = Object.keys(LENS_FIELDS).join(', ');
@@ -135,13 +135,13 @@ if (process.argv.includes('--help')) {
 const apiKey = process.env.PHOTOTOLOGY_API_KEY;
 if (!apiKey) {
   if (process.stdin.isTTY) {
-    // Running in a terminal — offer interactive setup
+    // Running in a terminal: offer interactive setup
     setupInteractive().catch((err) => {
       console.error('Setup failed:', err);
       process.exit(1);
     });
   } else {
-    // Spawned by an MCP client — can't prompt, just print help
+    // Spawned by an MCP client: can't prompt, just print help
     console.error('  Error: PHOTOTOLOGY_API_KEY is not set.\n');
     console.error(SETUP_GUIDE);
     process.exit(1);
@@ -204,11 +204,11 @@ if (!apiKey) {
             },
             { apiKey, baseUrl: process.env.PHOTOTOLOGY_BASE_URL },
           );
-        } catch { /* swallow — telemetry must never crash the MCP */ }
+        } catch { /* swallow: telemetry must never crash the MCP */ }
         if (prior) prior();
       };
     }
-  } catch { /* swallow — telemetry hook is best-effort */ }
+  } catch { /* swallow: telemetry hook is best-effort */ }
 
   const transport = new StdioServerTransport();
   server.connect(transport).catch((err) => {

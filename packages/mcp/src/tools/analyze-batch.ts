@@ -24,7 +24,7 @@ const MAX_BATCH = 200;
  *
  * Bounded to the API's per-user /analyze concurrency cap (`CONCURRENCY_CAP = 5`
  * in phototology-api/src/middleware/concurrencyLimiter.ts). The flat 600 RPM
- * rate limit is NOT the binding constraint — the 5-in-flight cap is, and it's a
+ * rate limit is NOT the binding constraint; the 5-in-flight cap is, and it's a
  * separate limiter. Firing more than 5 at once returns 429
  * CONCURRENCY_LIMIT_EXCEEDED; the SDK retries (Retry-After: 5s), but on a large
  * batch the retry budget exhausts before in-flight vision calls (~10-20s each)

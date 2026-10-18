@@ -20,7 +20,7 @@ interface RenderedError {
     // Machine-legible mirror of the OUT_OF_CREDITS text (C1). A model that
     // reads structuredContent gets the non-retryability as a boolean, not just
     // prose. `balance` maps to the SDK error's `totalBalance` (the dual-pool
-    // combined total — there is no single `balance` field on the error).
+    // combined total; there is no single `balance` field on the error).
     code?: string;
     retryable?: boolean;
     actionUrl?: string;
@@ -63,7 +63,7 @@ export function renderToolError(err: unknown): RenderedError {
     // and spells out non-retryability + agents-cannot-purchase + STOP, so a
     // model reads "hand off to a human and stop" rather than "transient, retry".
     // Threat-model C-T2: interpolate ONLY numeric/constant values (balance,
-    // creditsRequired, resetsInDays, the constant purchaseUrl) — never tool
+    // creditsRequired, resetsInDays, the constant purchaseUrl), never tool
     // input, filename, or lens names.
     const lines = [
       `OUT_OF_CREDITS: Balance ${err.totalBalance}, need ${err.creditsRequired} credits. ` +

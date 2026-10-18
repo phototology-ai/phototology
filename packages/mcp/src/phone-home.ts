@@ -1,15 +1,15 @@
 /**
- * `phoneHome()` — fire-and-forget MCP-protocol telemetry to phototology-api.
+ * `phoneHome()`: fire-and-forget MCP-protocol telemetry to phototology-api.
  *
  * Posts a tiny event payload to `POST /v1/mcp/event` whenever the MCP server
  * completes the initialize handshake (so we see *which* MCP client just
- * connected — Claude Desktop, Cursor, Gemini CLI, Codex, etc.) and on tools
+ * connected: Claude Desktop, Cursor, Gemini CLI, Codex, etc.) and on tools
  * discovery probes. This is the visibility gap left by api-side
- * `api_request` events, which only fire once an authenticated tool call
+ * `api_request` events, which only fire once a keyed tool call
  * (analyze, lookup) actually hits the HTTP API.
  *
  * Privacy posture: no third-party SDK is bundled. The only outbound
- * connection is to `api.phototology.com` — a domain the user's MCP is
+ * connection is to `api.phototology.com`, a domain the user's MCP is
  * already trusting for every analyze + lookup call. The user's API key is
  * the only credential involved. Opt out with `PHOTOTOLOGY_MCP_NO_TELEMETRY=1`
  * or the cross-tool `DO_NOT_TRACK=1`.
@@ -79,7 +79,7 @@ function shouldSkip(): boolean {
 /**
  * Send a single MCP-lifecycle event to the api proxy. Returns immediately;
  * the actual HTTP work happens on a detached promise. Resolves only the
- * "we tried" beat — the caller cannot wait on the network call.
+ * "we tried" beat; the caller cannot wait on the network call.
  */
 export function phoneHome(
   event: McpEventName,
@@ -94,7 +94,7 @@ export function phoneHome(
   const url = `${baseUrl}/v1/mcp/event`;
 
   // AbortController prevents the request from hanging forever if the api is
-  // unreachable. We don't await the promise — fire and detach — but the
+  // unreachable. We don't await the promise (fire and detach), but the
   // timeout still releases the underlying socket.
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -109,7 +109,7 @@ export function phoneHome(
   }
 
   // Cast to never so the floating-promise lint rule treats the call as
-  // explicitly discarded. We do NOT want to await — the MCP must keep
+  // explicitly discarded. We do NOT want to await: the MCP must keep
   // moving even when api.phototology.com is down.
   void fetch(url, {
     method: 'POST',
@@ -120,7 +120,7 @@ export function phoneHome(
     body: JSON.stringify(body),
     signal: controller.signal,
   })
-    .catch(() => { /* swallow — telemetry must never crash the MCP */ })
+    .catch(() => { /* swallow: telemetry must never crash the MCP */ })
     .finally(() => clearTimeout(timer));
 }
 

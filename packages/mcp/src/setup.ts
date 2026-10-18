@@ -83,7 +83,7 @@ function writeJsonConfig(editor: EditorConfig, apiKey: string): void {
   // Audit #5 HIGH (2026-05-19): config file contains PHOTOTOLOGY_API_KEY.
   // Restrict to owner read/write only so a shared box / cloud IDE
   // (Codespaces, Gitpod) doesn't leak the key. Pre-fix permissions
-  // defaulted to umask (typically 0o644 — world-readable).
+  // defaulted to umask (typically 0o644, world-readable).
   fs.writeFileSync(editor.configPath, JSON.stringify(config, null, 2) + '\n', { mode: 0o600 });
 }
 

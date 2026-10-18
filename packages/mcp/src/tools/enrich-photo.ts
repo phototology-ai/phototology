@@ -30,7 +30,7 @@ import { EnrichPhotoOutputSchema, type EnrichPhotoOutput } from '../schemas';
  * because the API treats a request without it as a client that cannot read a sidecar.
  *
  * Composition pattern: agents call this AFTER analyze_photo / analyze_batch
- * for any photo they want to be self-describing downstream — once enriched,
+ * for any photo they want to be self-describing downstream. Once enriched,
  * the photo doesn't need Phototology to surface its lens output (any photo
  * app that reads EXIF/IPTC/XMP can).
  */

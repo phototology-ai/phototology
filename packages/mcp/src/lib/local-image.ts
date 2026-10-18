@@ -53,7 +53,7 @@ export function resolvePath(input: string): string {
     return path.join(os.homedir(), input.slice(HOME_PREFIX.length));
   }
   if (input.startsWith('~')) {
-    // Bash ~user/ form or bare ~. Not supported — too host-specific and the
+    // Bash ~user/ form or bare ~. Not supported: too host-specific and the
     // MCP can't reliably resolve other users' homes across platforms.
     throw new LocalImageError(
       'RELATIVE_PATH_REJECTED',
@@ -347,7 +347,7 @@ const MAX_BASE64_CHARS = Math.ceil(MAX_FILE_BYTES / 3) * 4;
  * Sniff magic bytes (first 12 bytes are enough for all supported formats).
  *
  * The accepted set mirrors what the backend's Sharp pipeline (`prepareImage`
- * in @phototology/core) can actually decode + transcode to JPEG — including
+ * in @phototology/core) can actually decode + transcode to JPEG, including
  * AVIF and TIFF. Gatekeeping a narrower set here than the API supports just
  * bounces files the server would have handled (observed live, 2026-06-01:
  * 11 AVIFs rejected as UNSUPPORTED_FORMAT despite Sharp decoding AVIF fine).
@@ -369,19 +369,19 @@ function detectFormat(bytes: Buffer): 'jpeg' | 'png' | 'gif' | 'webp' | 'heic' |
   // TIFF: "II*\0" (little-endian, 49 49 2A 00) or "MM\0*" (big-endian, 4D 4D 00 2A).
   // NOTE: TIFF-based camera RAW (CR2/NEF/ARW/DNG) shares this magic; Sharp can't
   // decode proprietary RAW, so those will forward and fail server-side with a
-  // clear IMAGE_INVALID rather than the local UNSUPPORTED_FORMAT. Acceptable —
+  // clear IMAGE_INVALID rather than the local UNSUPPORTED_FORMAT. Acceptable:
   // RAW is rare here and usually exceeds the 10MB cap anyway.
   if (
     (bytes[0] === 0x49 && bytes[1] === 0x49 && bytes[2] === 0x2a && bytes[3] === 0x00) ||
     (bytes[0] === 0x4d && bytes[1] === 0x4d && bytes[2] === 0x00 && bytes[3] === 0x2a)
   ) return 'tiff';
-  // WebP: RIFF....WEBP — bytes 0-3 "RIFF", bytes 8-11 "WEBP"
+  // WebP: RIFF....WEBP: bytes 0-3 "RIFF", bytes 8-11 "WEBP"
   if (
     bytes.length >= 12 &&
     bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
     bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50
   ) return 'webp';
-  // ISO-BMFF container: ....ftyp.... — bytes 4-7 "ftyp", bytes 8-11 brand.
+  // ISO-BMFF container: ....ftyp....: bytes 4-7 "ftyp", bytes 8-11 brand.
   // Covers both AVIF (AV1-in-HEIF) and HEIC/HEIF. The MCP only needs a non-null
   // result to forward the bytes; the API re-sniffs and decodes via Sharp.
   if (
@@ -588,7 +588,7 @@ export function expandGlobs(
       onRefusedPattern(raw, err);
       continue;
     }
-    // Detect glob meta-chars (heuristic — fast-glob will also treat literal paths as patterns)
+    // Detect glob meta-chars (heuristic; fast-glob will also treat literal paths as patterns)
     const isGlob = /[*?[\]{}!]/.test(expanded);
     if (isGlob) {
       if (dirs !== null) {

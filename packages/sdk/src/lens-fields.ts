@@ -1,5 +1,5 @@
 /**
- * LENS_FIELDS — authoritative mapping from lens ID to the top-level
+ * LENS_FIELDS: authoritative mapping from lens ID to the top-level
  * VisionOutput field names that lens owns.
  *
  * This is a mirror of the constant in `@phototology/core`. The SDK is
@@ -9,9 +9,9 @@
  * fails if the two drift. Add a lens there and here together.
  *
  * Consumers use this in two ways:
- *   1. As a type source — `LensId` narrows `AnalyzeRequest.modules` so
+ *   1. As a type source: `LensId` narrows `AnalyzeRequest.modules` so
  *      IDE autocomplete shows the valid names.
- *   2. As a runtime value — `Object.keys(LENS_FIELDS)` enumerates the
+ *   2. As a runtime value: `Object.keys(LENS_FIELDS)` enumerates the
  *      current lens list without a network round-trip to `/v1/modules`.
  *
  * Behavioral modules (`base`, `vehicle-base`, `multi-image`, `multi-image-vehicle`)

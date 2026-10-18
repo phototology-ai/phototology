@@ -7,7 +7,7 @@ export interface RetryConfig {
   timeout: number;
   /**
    * Overall wall-clock budget across ALL attempts + backoffs, in ms. Without
-   * it, a stalled upstream could burn `timeout` on every attempt — up to
+   * it, a stalled upstream could burn `timeout` on every attempt, up to
    * `(maxRetries + 1) * timeout` (~minutes). The deadline bounds the total time
    * a single call can take: each attempt's timeout is clamped to the remaining
    * budget and backoff sleeps never sleep past it. `undefined`/`0` = unbounded
@@ -41,7 +41,7 @@ export async function fetchWithRetry(
   const cappedSleep = (ms: number): Promise<void> => sleep(Math.max(0, Math.min(ms, remainingMs())));
 
   for (let attempt = 0; attempt <= config.maxRetries; attempt++) {
-    // Out of total budget — stop retrying and surface the last error.
+    // Out of total budget: stop retrying and surface the last error.
     if (remainingMs() <= 0) {
       throw lastError ?? deadlineError();
     }
@@ -90,7 +90,7 @@ export async function fetchWithRetry(
     try {
       errorBody = await response.json() as ErrorResponse;
     } catch {
-      // Non-JSON error response — wrap as internal error
+      // Non-JSON error response: wrap as internal error
       throw new PhototologyError('Server returned non-JSON error response', {
         code: 'INTERNAL_ERROR',
         status: response.status,

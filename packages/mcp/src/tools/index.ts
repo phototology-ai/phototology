@@ -34,13 +34,13 @@ function extractErrorCode(result: ToolResult): string | undefined {
       const parsed = JSON.parse(text);
       if (typeof parsed?.error?.code === 'string') return parsed.error.code;
     }
-  } catch { /* plain text error — no machine code to extract */ }
+  } catch { /* plain text error: no machine code to extract */ }
   return undefined;
 }
 
 /**
  * Analyze-only enrichment pulled from the result payload. PII-free counts and
- * booleans only. Never throws — shape drift just drops the enrichment.
+ * booleans only. Never throws: shape drift just drops the enrichment.
  */
 function enrich(toolName: string, result: ToolResult): Partial<ToolOutcome> {
   try {
@@ -73,7 +73,7 @@ function enrich(toolName: string, result: ToolResult): Partial<ToolOutcome> {
       const usage = result?.structuredContent?.usage as { creditsCharged?: unknown } | undefined;
       return typeof usage?.creditsCharged === 'number' ? { creditsCharged: usage.creditsCharged } : {};
     }
-  } catch { /* shape drift — emit the base event without enrichment */ }
+  } catch { /* shape drift: emit the base event without enrichment */ }
   return {};
 }
 
@@ -107,7 +107,7 @@ function instrumentHandler(toolName: string, handler: ToolHandler, opts: Telemet
 /**
  * Transparent Proxy that instruments every handler passed to `registerTool`.
  * Delegates all other access to the real server, so `jest.spyOn(server,
- * 'registerTool')` and any McpServer behavior keep working — only the handler
+ * 'registerTool')` and any McpServer behavior keep working; only the handler
  * (3rd arg) is wrapped, name + config pass through untouched.
  */
 function instrumentServer(server: McpServer, opts: TelemetryOpts): McpServer {
@@ -131,7 +131,7 @@ function instrumentServer(server: McpServer, opts: TelemetryOpts): McpServer {
  * (fire-and-forget; skipped under PHOTOTOLOGY_MCP_NO_TELEMETRY, DO_NOT_TRACK or
  * NODE_ENV=test, see shouldSkip in ../phone-home). The event carries the
  * tool name, ok/duration, an error code on failure (including local failures
- * that never reach the API), and analyze enrichment — the visibility the
+ * that never reach the API), and analyze enrichment: the visibility the
  * route-based `api_request` events can't provide.
  *
  * Returns the client so `registerResources` reads through the same instance

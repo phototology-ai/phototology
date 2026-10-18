@@ -77,6 +77,19 @@ Stated plainly, so an agent can route correctly:
 
 **How they chain.** Start free: `lookup_photo` for a single image, or `get_credits` before a batch. Analyze only the cache misses with `analyze_photo` (one image) or `analyze_batch` (2 or more). Bake the results into the file with `enrich_photo`. `list_lenses` and `purchase_credits` are free helpers you can call any time.
 
+## Resources
+
+| URI | What it serves |
+|-----|----------------|
+| `phototology://lenses` | The lens and stack catalog, the same data `list_lenses` returns. |
+| `phototology://photo/{sha256}` | One registry record: its hashes, the lenses already run on it, and their receipts. Free to read. A photo not in the registry reads as `PHOTO_NOT_IN_REGISTRY`. |
+
+`analyze_photo`, `analyze_batch` and `lookup_photo` link each photo they name to its `phototology://photo/{sha256}` resource.
+
+## Receipts
+
+Analyze and lookup results carry `receipts`: signed records of which lenses ran on which photo, with which model, and when. Results also carry `credentials` when the API read the photo's content credential. To check a receipt, use `verifyReceiptSignature` (offline) or `client.verifyReceipt` (server-side, free) from [`@phototology/sdk`](https://www.npmjs.com/package/@phototology/sdk).
+
 ## Pricing
 
 - **1 credit = $0.01 = one lens run on one photo.** Stack five lenses on a photo = 5 credits = $0.05.
