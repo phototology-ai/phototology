@@ -2,6 +2,26 @@
 
 All notable changes to `@phototology/mcp` are tracked here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning follows [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+Typed results. Every tool now declares an `outputSchema` and returns `structuredContent` that matches it, next to the same JSON in a text block. The schemas are open objects, so a field the API adds later never makes a client reject a result. Several result shapes changed; the old field names are listed under Changed.
+
+### Added
+- **`outputSchema` and `structuredContent` on all seven tools.** Prices appear in dollars beside credits everywhere: `usage.usd` on analyze results, `summary.usd` on batches, `usd` on `get_credits`, `usage.usd.charged` on `enrich_photo`, and `credits` plus `usdPerPhoto` on each `list_lenses` lens and stack (1 credit = $0.01).
+- **`analyze_batch` `dryRun: true`.** Looks up every input (URLs, local files and base64), bills nothing and analyzes nothing. Each row is `{ input, matchType, cachedLenses, missingLenses, resource? }`, and `summary.estimate` holds `{ photos, cacheHits, creditsNeeded, usd }`. Every batch, dry or not, also carries `summary.estimate` and a one-line estimate in text. On a real run the estimate for local-file and base64 inputs is an upper bound, since those are not looked up before analysis. With `refresh: true` a dry run still looks every photo up, so rows keep their real `matchType`, while the estimate prices every lens. A `stack` batch whose lens catalog is unreachable still runs, with `estimate: null` and `summary.warnings: ['ESTIMATE_UNAVAILABLE']`.
+- **Resources.** `phototology://lenses` serves the lens and stack catalog (the same data as `list_lenses`). `phototology://photo/{sha256}` serves one registry record, free to read; a photo not in the registry reads as `PHOTO_NOT_IN_REGISTRY`.
+- **`resource_link` blocks.** `analyze_photo`, `analyze_batch` and `lookup_photo` link each named photo to its `phototology://photo/{sha256}` resource, and say the same in a `resource` field.
+- **`enrich_photo` preview.** When the API returns enriched bytes, the result carries an `image` content block: a JPEG of the enriched photo with its longest edge at most 1024 px (never enlarged), quality 80, EXIF rotation applied. Full-size bytes still go to `outputPath` or `imageBase64` as before. Adds `sharp` as a dependency, loaded only when a preview is made: if its native binary cannot load, the tools still start and `enrich_photo` returns its result with a `warnings` entry instead of the preview.
+
+### Changed
+- **`analyze_photo` result** is `{ photo: { sha256, pHash, dHash, ... }, output, lenses, usage: { creditsCharged, creditsSaved, usd: { charged, saved }, modulesUsed }, cacheHit, receipts, credentials?, resource?, livemode }`. `id`, `meta`, `warnings` and `embedding` are still there as extra fields.
+- **`analyze_batch` result** is `{ summary, results }`. `summary` holds `photos`, `cacheHits`, `analyzed`, `errors`, `creditsCharged`, `creditsSaved`, `usd: { charged, saved }`, `estimate` (null when it could not be priced), `dryRun?` and `warnings?`. It replaces `totalCacheHits`, `totalCreditsCharged` and `estimatedCreditsSaved`. Each `results[i]` is the `analyze_photo` result plus `input` (and `matchType` when the registry served it), or `{ input, error: { code, message } }` for a photo that failed, replacing the old `source: 'error'` rows.
+- **`lookup_photo` result** is flattened to the one image asked about: `{ matchType, photo?, hammingDistance?, pdqDistance?, computedHashes?, receipts, credentials?, resource? }`. Cached lens output moves from `results[sha256].photo.lenses` to `photo.lenses`. `matchType` is `exact`, `pixels`, `pdq`, `fuzzy` or `none`.
+- **`get_credits`** adds `usd`. Only `total` and `usd` are always present; `tier`, `community`, `purchased` and `reserved` are optional, so a dropped legacy field never fails a balance read. An older API without `total` gets it summed from the two pools.
+- **`list_lenses`** adds `credits` to each lens and `credits` plus `usdPerPhoto` to each stack.
+- **`purchase_credits`** documents its `{ url, actions }` shape; no field changed.
+- **`enrich_photo` result** is `{ mode, savedTo?, imageBase64?, sidecar?, formatsWritten, lensVersions, sha256, registryId?, credentials?, reason?, usage: { creditsCharged, usd: { charged } }, warnings?, meta? }`. `usage.creditsCharged` is the canonical cost field; `meta.creditsCharged` is still present for compatibility. The top-level `creditsCharged` that the `outputPath` path used to return is gone, and so is `object`. `mode` is `file` when the metadata went into the image, or `sidecar` when the API returned an XMP packet instead and left the file untouched; a sidecar result writes nothing to `outputPath`.
+
 ## [1.3.0] — 2026-06-02
 
 ### Changed

@@ -27,9 +27,9 @@ analyze_batch({
 })
 ```
 
-Globs are expanded internally. Arrays combine freely (`imageUrls`, `imagePaths`, `imagesBase64` can all be in the same call). Total inputs cap at 200 per call — for thousands of photos, loop in slices.
+Globs are expanded internally. Arrays combine freely (`imageUrls`, `imagePaths`, `imagesBase64` can all be in the same call). Total inputs cap at 200 per call. For thousands of photos, loop in slices.
 
-Per-file errors (missing file, oversized, unsupported format) are isolated — one bad file does not fail the whole batch. Each errored file shows as a `source: 'error'` outcome with the path and error code; the remaining files analyze normally.
+Per-file errors (missing file, oversized, unsupported format) are isolated: one bad file does not fail the whole batch. Each errored file comes back in `results` as `{ input, error: { code, message } }`, where `input` is the path; the remaining files analyze normally.
 
 ## Steps
 
@@ -37,15 +37,17 @@ Per-file errors (missing file, oversized, unsupported format) are isolated — o
 
 1. **Pre-flight credit check** with `get_credits` if you anticipate spending more than ~50 credits. For tiny batches (under 10 photos with 1-2 lenses), skip this.
 
-2. **Pick lenses with `phototology:smart-stack`.** Cheaper subsets save 10x on cost. For a "describe these photos" batch with 50 photos at 1 lens = 50 credits ($0.50). At full-analysis = 800 credits ($8). Pick wisely.
+2. **Pick lenses with `phototology:smart-stack`.** Cheaper subsets cut the cost many times over. A "describe these photos" batch of 50 photos at 1 lens = 50 credits ($0.50). `full-analysis` bills every billable lens on every photo; `list_lenses` gives each stack's per-photo price as `usdPerPhoto`. Pick wisely.
 
-3. **Call `analyze_batch`** with the URL list and your chosen `lenses: [...]`. The tool internally:
+3. **Preview the cost with `dryRun: true`** when the batch is large or the balance is tight. A dry run bills nothing and analyzes nothing. `summary.estimate` holds `{ photos, cacheHits, creditsNeeded, usd }` (null, with `summary.warnings: ['ESTIMATE_UNAVAILABLE']`, if a stack could not be priced), and each `results[i]` is `{ input, matchType, cachedLenses, missingLenses, resource? }`. Tell the user what the run will cost, then call again without `dryRun`.
+
+4. **Call `analyze_batch`** with the URL list and your chosen `lenses: [...]`. The tool internally:
    - Bulk-looks up every photo (free)
    - Identifies cache hits (those return free)
    - Analyzes only the misses, with bounded concurrency (no fixed chunk size)
 
-4. **Surface the savings.** The response includes `totalCacheHits`, `totalCreditsCharged`, and `estimatedCreditsSaved`. Tell the user:
-   > Analyzed 50 photos. 38 came from the registry (0 credits). 12 were new — analyzed for 12 credits. Saved an estimated 38 credits from the cache.
+5. **Surface the savings.** The result is `{ summary, results }`. `summary` holds `photos`, `cacheHits`, `analyzed`, `errors`, `creditsCharged`, `creditsSaved` and `usd: { charged, saved }`. Each `results[i]` is the `analyze_photo` result for one photo plus `input` (and `matchType` when the registry served it), or `{ input, error: { code, message } }` for a photo that failed. Tell the user:
+   > Analyzed 50 photos. 38 came from the registry (0 credits). 12 were new, analyzed for 12 credits ($0.12). The registry saved 38 credits ($0.38).
 
 ### Large jobs (200+ photos, into the thousands)
 
@@ -57,8 +59,8 @@ for slice in chunks(image_urls, 200):
     aggregate(result)
 ```
 
-After each slice, surface progress:
-> 600 / 1,500 photos done — 412 cache hits so far, 23 credits spent.
+After each slice, add up `summary.cacheHits` and `summary.creditsCharged` and surface progress:
+> 600 / 1,500 photos done: 412 cache hits so far, 23 credits spent.
 
 If credits run low mid-job, stop and call `purchase_credits`. Resume from where you left off after the user buys more.
 

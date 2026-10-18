@@ -68,11 +68,11 @@ Stated plainly, so an agent can route correctly:
 | Tool | What it does | Cost |
 |------|--------------|------|
 | `analyze_photo` | Run AI vision against ONE image and return structured facts per lens. Accepts `imageUrl`, `imageBase64`, or `imagePath`. | 1 credit per lens. Re-running cached lenses on the same photo: 0. |
-| `analyze_batch` | Analyze 1 to 200 photos in a single call. Internally lookup-first per URL (20 in flight), then analyzes cache-miss photos with bounded concurrency (5 in flight, matching the API per-user cap). For thousands, loop in slices of 200. Accepts `imageUrls`, `imagesBase64`, or `imagePaths` (with glob support). | 1 credit per lens per non-cached photo. Cache hits free. |
+| `analyze_batch` | Analyze 1 to 200 photos in a single call. Internally lookup-first per URL (20 in flight), then analyzes cache-miss photos with bounded concurrency (5 in flight, matching the API per-user cap). For thousands, loop in slices of 200. Accepts `imageUrls`, `imagesBase64`, or `imagePaths` (with glob support). Returns `{ summary, results }`; pass `dryRun: true` to see what a batch would cost without spending. | 1 credit per lens per non-cached photo. Cache hits free. A dry run is free. |
 | `lookup_photo` | Check if a single photo has already been analyzed; return all cached lens results. Accepts `sha256`, `pHash`, `imageUrl`, `imageBase64`, or `imagePath` (cascade). | Free. |
-| `enrich_photo` | Write cached lens output into a photo's EXIF/IPTC/XMP metadata so the structured intelligence travels with the file. Accepts `imageUrl`, `imageBase64`, or `imagePath` plus an optional `outputPath` to save the enriched bytes back to disk. | 5 credits per call. |
+| `enrich_photo` | Write cached lens output into a photo's EXIF/IPTC/XMP metadata so the structured intelligence travels with the file. Accepts `imageUrl`, `imageBase64`, or `imagePath` plus an optional `outputPath` to save the enriched bytes back to disk. Returns a small JPEG preview of the enriched photo. | 5 credits per call. |
 | `list_lenses` | Enumerate available lenses and stacks with descriptions and output fields. | Free. |
-| `get_credits` | Read the account credit balance: `total` spendable credits plus `reserved` in-flight holds. | Free. |
+| `get_credits` | Read the account credit balance: `total` spendable credits and its dollar value `usd`, plus `reserved` in-flight holds when there are any. | Free. |
 | `purchase_credits` | Return a wallet deep-link the user can open to buy more credits. | Free. |
 
 **How they chain.** Start free: `lookup_photo` for a single image, or `get_credits` before a batch. Analyze only the cache misses with `analyze_photo` (one image) or `analyze_batch` (2 or more). Bake the results into the file with `enrich_photo`. `list_lenses` and `purchase_credits` are free helpers you can call any time.

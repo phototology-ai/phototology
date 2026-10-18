@@ -1,12 +1,12 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
-  PhototologyClient,
   AuthenticationError,
   LENS_FIELDS,
   PRESET_IDS,
 } from '@phototology/sdk';
 import { registerTools } from './tools';
+import { registerResources } from './resources';
 import { setupInteractive } from './setup';
 import { phoneHome } from './phone-home';
 
@@ -29,7 +29,7 @@ export function buildServerInstructions(): string {
     '',
     '## Tools',
     '- `lookup_photo`: check the registry for prior analysis on a single image. Free. Always try this first for single-photo work.',
-    'For local files: pass `imagePath` (absolute path or `~/`-prefixed) to analyze_photo / analyze_batch / lookup_photo. This MCP server runs on the machine that installed it (typically the user\'s laptop), so paths are resolved on that machine\'s filesystem. NOT for paths inside an agent sandbox (e.g. Claude\'s /mnt/user-data/uploads/...) — use `imageBase64` (small images) or `imageUrl` (hostable images of any size) for those.',
+    'For local files: pass `imagePath` (absolute path or `~/`-prefixed) to analyze_photo / analyze_batch / lookup_photo. This MCP server runs on the machine that installed it (typically the user\'s laptop), so paths are resolved on that machine\'s filesystem. NOT for paths inside an agent sandbox (e.g. Claude\'s /mnt/user-data/uploads/...); use `imageBase64` (small images) or `imageUrl` (hostable images of any size) for those.',
     '- `get_credits`: read the account credit balance. Free. Call this before any analyze loop so you can warn before spending.',
     '- `analyze_photo`: run AI vision against ONE image. Bills 1 credit per lens. Re-running a lens on the same photo costs zero (delta billing).',
     '- `analyze_batch`: analyze 1 to 200 images in a single call. Internally lookup-first (per-URL, free) then analyzes cache-miss photos with bounded concurrency. Use this for any job with 2 or more photos. For thousands, loop this tool in slices of 200.',
@@ -60,28 +60,28 @@ export function buildServerInstructions(): string {
     `Curated stacks bundle related lenses for specific domains and use-cases: ${presets}. Pick a curated stack when the workflow matches (e.g. \`memorial\` for tribute photos, \`automobile\` for vehicle analysis), build a custom stack via \`lenses: [...]\` for precise billing, or pass both to augment a curated stack with extra lenses.`,
     '',
     '## How to be cheap',
-    '1. Always `lookup_photo` first when you have a URL or sha256. If a cached lens covers the user\'s question, you\'re done — zero credits.',
+    '1. Always `lookup_photo` first when you have a URL or sha256. If a cached lens covers the user\'s question, you\'re done, at zero credits.',
     '2. When you must analyze, pick the smallest set of lenses that answer the question. Use `list_lenses` to map a user question to lens output fields.',
     '3. Re-running the same lens on the same photo is automatically free (delta billing). Pass `refresh: true` only when the user explicitly asks to re-analyze.',
     '4. Surface `usage.creditsCharged` from analyze responses so the user sees the cost.',
     '',
     '## Companion skills',
     'Five skills ship alongside `@phototology/mcp` under `node_modules/@phototology/mcp/skills/`. Suggest them when the workflow matches:',
-    '- `phototology:lookup-first` — always check the registry before spending credits (single-photo).',
-    '- `phototology:check-credits` — pre-flight balance read before a big spend.',
-    '- `phototology:smart-stack` — smart-pick the cheapest lens subset for a specific question.',
-    '- `phototology:photo-shared` — when the user attaches, drops, or references an image, route it through Phototology for the cheapest accurate answer.',
-    '- `phototology:batch-analyze` — when the user has 2 or more photos, use `analyze_batch` (not a loop of `analyze_photo`). Bulks lookups, analyzes only cache misses, surfaces credit savings.',
+    '- `phototology:lookup-first`: always check the registry before spending credits (single-photo).',
+    '- `phototology:check-credits`: pre-flight balance read before a big spend.',
+    '- `phototology:smart-stack`: smart-pick the cheapest lens subset for a specific question.',
+    '- `phototology:photo-shared`: when the user attaches, drops, or references an image, route it through Phototology for the cheapest accurate answer.',
+    '- `phototology:batch-analyze`: when the user has 2 or more photos, use `analyze_batch` (not a loop of `analyze_photo`). Bulks lookups, analyzes only cache misses, surfaces credit savings.',
     'Each skill has a SKILL.md that the user can copy into their Claude skills directory.',
     '',
     '## When you run out of credits',
-    'You will receive a tool error whose text starts "Out of credits." That response also carries a `structuredContent.actions` array with an `open_url` action pointing at the wallet. **Surface the URL to the user verbatim** — they need to open it in a browser to buy credits. Do not retry the failed call until they confirm they purchased.',
+    'You will receive a tool error whose text starts "Out of credits." That response also carries a `structuredContent.actions` array with an `open_url` action pointing at the wallet. **Surface the URL to the user verbatim**; they need to open it in a browser to buy credits. Do not retry the failed call until they confirm they purchased.',
     '',
     '## Response shape',
-    'Analyze output is flat-keyed JSON — top-level keys are field names (e.g. `estimatedDate`, `peopleCount`, `atmosphere`), not lens names. Use `list_lenses` to map fields back to their owning lens.',
+    'Analyze output is flat-keyed JSON: top-level keys are field names (e.g. `estimatedDate`, `peopleCount`, `atmosphere`), not lens names. Use `list_lenses` to map fields back to their owning lens.',
     '',
     '## Test vs live keys',
-    'A `pt_test_` key runs the free sandbox: analyze returns deterministic golden-fixture data with `livemode: false`, `usage.creditsCharged: 0`, and `meta.provider: "test-sandbox"` — the same payload regardless of the image. Use it to wire up an integration, never as facts about a real photo. A `pt_live_` key returns real model output with `livemode: true`. Branch on `livemode`, not on `meta.provider`.',
+    'A `pt_test_` key runs the free sandbox: analyze returns deterministic golden-fixture data with `livemode: false`, `usage.creditsCharged: 0`, and `meta.provider: "test-sandbox"`, the same payload regardless of the image. Use it to wire up an integration, never as facts about a real photo. A `pt_live_` key returns real model output with `livemode: true`. Branch on `livemode`, not on `meta.provider`.',
   ].join('\n');
 }
 
@@ -161,16 +161,13 @@ if (!apiKey) {
     },
   );
 
-  registerTools(server, apiKey, mcpUserAgent);
+  const client = registerTools(server, apiKey, mcpUserAgent);
+  registerResources(server, client);
 
-  // Verify the API key before connecting transport to avoid mid-handshake crashes
-  const verifyClient = new PhototologyClient({
-    apiKey,
-    baseUrl: process.env.PHOTOTOLOGY_BASE_URL,
-    userAgent: mcpUserAgent,
-  });
+  // Verify the API key before connecting transport to avoid mid-handshake crashes.
+  // Uses the tools' client: same key, base URL and user agent.
   try {
-    await verifyClient.modules();
+    await client.modules();
   } catch (err) {
     if (err instanceof AuthenticationError) {
       console.error('  Error: PHOTOTOLOGY_API_KEY is invalid. Check your key at https://api.phototology.com');

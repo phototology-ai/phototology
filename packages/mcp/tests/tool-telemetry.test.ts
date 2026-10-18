@@ -74,7 +74,20 @@ describe('tool telemetry', () => {
     expect(outcome.cacheHit).toBe(true);
   });
 
-  it('enriches enrich_photo with creditsCharged from meta (no lensCount)', async () => {
+  it('enriches analyze_batch with photoCount/cacheHits/creditsCharged from structuredContent.summary', async () => {
+    const handler = registerAndGet('analyze_batch');
+    const result = await handler({ imageUrls: ['https://x/a.jpg', 'https://x/b.jpg'], lenses: ['dating'], refresh: true });
+    expect(result.structuredContent.summary).toBeDefined();
+    expect(toolEventSpy).toHaveBeenCalledTimes(1);
+    const [tool, outcome] = toolEventSpy.mock.calls[0];
+    expect(tool).toBe('analyze_batch');
+    expect(outcome.ok).toBe(true);
+    expect(outcome.photoCount).toBe(2);
+    expect(outcome.cacheHits).toBe(2);
+    expect(outcome.creditsCharged).toBe(4);
+  });
+
+  it('enriches enrich_photo with creditsCharged from usage (no lensCount)', async () => {
     const handler = registerAndGet('enrich_photo');
     await handler({ imageUrl: 'https://x/y.jpg' });
     expect(toolEventSpy).toHaveBeenCalledTimes(1);
@@ -83,6 +96,46 @@ describe('tool telemetry', () => {
     expect(outcome.ok).toBe(true);
     expect(outcome.creditsCharged).toBe(5);
     expect(outcome.lensCount).toBeUndefined();
+  });
+
+  it('takes the enrich_photo creditsCharged from the structured envelope, not the text block', async () => {
+    // A handler whose text block and structured envelope disagree proves which one is read.
+    let outcome: any;
+    let handler: (args: unknown) => Promise<unknown> = async () => undefined;
+    let spy: jest.SpyInstance | undefined;
+    jest.isolateModules(() => {
+      jest.doMock('../src/tools/enrich-photo', () => ({
+        registerEnrichPhoto: (server: any) => server.registerTool('enrich_photo', { description: 'd' }, async () => ({
+          content: [{ type: 'text', text: JSON.stringify({ meta: { creditsCharged: 99 }, creditsCharged: 98 }) }],
+          structuredContent: { usage: { creditsCharged: 7, usd: { charged: '0.07' } }, meta: { creditsCharged: 99 } },
+        })),
+      }));
+      const isolatedPhoneHome = require('../src/phone-home');
+      spy = jest.spyOn(isolatedPhoneHome, 'mcpToolEvent').mockImplementation((...args: any[]) => { outcome = args[1]; });
+      const { registerTools: isolatedRegister } = require('../src/tools');
+      const server = new McpServer({ name: 't', version: '0.0.1' });
+      const calls: any[] = [];
+      jest.spyOn(server, 'registerTool').mockImplementation(((...args: any[]) => { calls.push(args); return undefined as any; }) as any);
+      isolatedRegister(server, 'pt_test_k');
+      handler = calls.find((c) => c[0] === 'enrich_photo')[2];
+    });
+    await handler({});
+    spy?.mockRestore();
+    jest.dontMock('../src/tools/enrich-photo');
+    expect(outcome.creditsCharged).toBe(7);
+  });
+
+  it('a dry-run batch reports ok and duration but no cache-hit or photo-count enrichment', async () => {
+    const handler = registerAndGet('analyze_batch');
+    const result = await handler({ imageUrls: ['https://x/a.jpg', 'https://x/b.jpg'], lenses: ['dating'], dryRun: true });
+    expect(result.structuredContent.summary.dryRun).toBe(true);
+    expect(toolEventSpy).toHaveBeenCalledTimes(1);
+    const [, outcome] = toolEventSpy.mock.calls[0];
+    expect(outcome.ok).toBe(true);
+    expect(typeof outcome.durationMs).toBe('number');
+    expect(outcome).not.toHaveProperty('cacheHits');
+    expect(outcome).not.toHaveProperty('photoCount');
+    expect(outcome).not.toHaveProperty('creditsCharged');
   });
 
   it('reports ok:false + errorCode on a local-image failure', async () => {

@@ -5,6 +5,9 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { PhototologyClient } from '@phototology/sdk';
 import { renderToolError } from './errors';
 import { readImage, resolvePath, validateBase64, LocalImageError } from '../lib/local-image';
+import { toEnrichEnvelope } from '../lib/envelope';
+import { makePreview } from '../lib/preview';
+import { EnrichPhotoOutputSchema } from '../schemas';
 
 /**
  * enrich_photo MCP tool (item-048).
@@ -24,13 +27,13 @@ const EnrichInputSchema = {
   imageUrl: z.string().url().optional()
     .describe('Publicly fetchable image URL. Server fetches, computes sha256, looks up the registry, writes the enriched bytes, and returns them as base64.'),
   imageBase64: z.string().optional()
-    .describe('Base64-encoded image bytes (no data: URL prefix). Useful for small images; for large files prefer imageUrl or imagePath.'),
+    .describe('Base64-encoded image bytes (no data: URL prefix). Keep it under about 150 KB; for larger files prefer imageUrl or imagePath.'),
   imagePath: z.string().optional()
     .describe('Absolute local-filesystem path on the machine running the MCP server. The MCP reads the file and forwards bytes. Accepts absolute (/Users/...) or ~/-prefixed paths.'),
   formats: z.array(z.enum(['exif', 'iptc', 'xmp'])).optional()
-    .describe('Which metadata blocks to write. Defaults to ["xmp"] — smallest and most portable. Use ["exif", "iptc", "xmp"] to write all three. c2pa signing is deferred to a future release.'),
+    .describe('Which metadata blocks to write. Defaults to ["xmp"], the smallest and most portable. Use ["exif", "iptc", "xmp"] to write all three. c2pa signing is deferred to a future release.'),
   outputPath: z.string().optional()
-    .describe('Optional absolute local-filesystem path to write the enriched photo back to disk. Accepts absolute or ~/-prefixed paths. When provided, the tool writes the enriched bytes to this path and returns { savedTo, formatsWritten, lensVersions, creditsCharged } — agents can use this to enrich-in-place without handling base64 themselves. When omitted, the response carries the enriched bytes as imageBase64.'),
+    .describe('Optional absolute local-filesystem path to write the enriched photo back to disk. Accepts absolute or ~/-prefixed paths. When provided, the tool writes the enriched bytes to this path and returns savedTo instead of imageBase64, so agents can enrich a local file without handling base64 themselves. When omitted, the response carries the enriched bytes as imageBase64.'),
 };
 
 interface EnrichArgs {
@@ -52,15 +55,20 @@ export function registerEnrichPhoto(server: McpServer, client: PhototologyClient
       description: [
         'Write cached lens output back into the image file\'s EXIF/IPTC/XMP metadata blocks. The photo must have been analyzed before (analyze_photo or analyze_batch).',
         '',
-        'The enriched photo carries its structured intelligence in standard metadata fields any downstream tool can read — no Phototology API call needed to access the analysis after enrichment. Useful when handing a photo off to another app or archiving it.',
+        'The enriched photo carries its structured intelligence in standard metadata fields any downstream tool can read, with no Phototology API call needed to access the analysis after enrichment. Useful when handing a photo off to another app or archiving it.',
         '',
-        'Cost: 5 credits per call. Bills regardless of cache state — the write-back work is its own billable operation.',
+        'Cost: 5 credits per call. Bills regardless of cache state. The write-back work is its own billable operation.',
         '',
-        'For local files, the optional `outputPath` parameter writes the enriched bytes back to disk so you don\'t have to handle the base64 yourself. Without it, the tool returns the enriched bytes as `imageBase64`.',
+        'For local files, the optional `outputPath` parameter writes the enriched bytes back to disk so you don\'t have to handle the base64 yourself. Without it, the tool returns the enriched bytes as `imageBase64`. Base64 input over about 150 KB is discouraged; pass `imageUrl` or `imagePath` instead.',
+        '',
+        'Returns `{ mode, savedTo?, imageBase64?, sidecar?, formatsWritten, lensVersions, sha256, registryId?, credentials?, reason?, usage: { creditsCharged, usd: { charged } }, warnings?, meta? }`. `mode` is `file` when the metadata went into the image bytes, or `sidecar` when the API left the file untouched and returned an XMP packet in `sidecar.xmp` instead (`reason` says why). `usage.creditsCharged` is the credits this call spent and `usage.usd.charged` its dollar value (e.g. "0.05"). `warnings` is present when the preview could not be made. `meta` is the API\'s request metadata (request id, timing).',
+        '',
+        'When the result has image bytes, it also carries an `image` content block: a JPEG preview of the enriched photo, longest edge at most 1024 px, so you can see the photo without loading the full-resolution bytes.',
         '',
         'If the photo has not been analyzed before, returns a PHOTO_NOT_IN_REGISTRY error. Call `analyze_photo` first, then `enrich_photo`.',
       ].join('\n'),
       inputSchema: EnrichInputSchema,
+      outputSchema: EnrichPhotoOutputSchema,
       annotations: {
         readOnlyHint: false, // writes bytes (returned or saved to disk)
         destructiveHint: false, // never destroys; creates a new enriched file
@@ -120,26 +128,31 @@ export function registerEnrichPhoto(server: McpServer, client: PhototologyClient
           formats: requestedFormats,
         });
 
-        if (resolvedOutputPath) {
-          // Write enriched bytes to disk; respond with savedTo metadata.
-          const enrichedBytes = Buffer.from(result.imageBase64, 'base64');
-          fs.writeFileSync(resolvedOutputPath, enrichedBytes);
-          return {
-            content: [{
-              type: 'text' as const,
-              text: JSON.stringify({
-                savedTo: resolvedOutputPath,
-                formatsWritten: result.formatsWritten,
-                lensVersions: result.lensVersions,
-                sha256: result.sha256,
-                creditsCharged: result.meta.creditsCharged,
-              }, null, 2),
-            }],
-          };
+        const enrichedBytes = result.imageBase64 ? Buffer.from(result.imageBase64, 'base64') : undefined;
+        // Sidecar mode carries no bytes, so there is nothing to write to outputPath.
+        const savedTo = enrichedBytes && resolvedOutputPath ? resolvedOutputPath : undefined;
+        if (savedTo && enrichedBytes) fs.writeFileSync(savedTo, enrichedBytes);
+
+        const envelope = toEnrichEnvelope(result, { keepBytes: !resolvedOutputPath, savedTo });
+
+        // The preview is a convenience: a decode failure, or sharp failing to
+        // load, never fails the paid call; it becomes a warning beside the result.
+        let preview: { data: string; mimeType: 'image/jpeg' } | undefined;
+        if (enrichedBytes) {
+          try {
+            preview = await makePreview(enrichedBytes);
+          } catch (previewErr: unknown) {
+            const why = previewErr instanceof Error ? previewErr.message : String(previewErr);
+            envelope.warnings = [`No preview: the preview could not be made (${why}).`];
+          }
         }
 
         return {
-          content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: 'text' as const, text: JSON.stringify(envelope, null, 2) },
+            ...(preview ? [{ type: 'image' as const, data: preview.data, mimeType: preview.mimeType }] : []),
+          ],
+          structuredContent: envelope,
         };
       } catch (err: unknown) {
         return renderToolError(err);

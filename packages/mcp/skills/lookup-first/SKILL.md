@@ -18,12 +18,13 @@ Every time the user has an image URL or sha256 AND a question about that image. 
    - If unclear, call `list_lenses` and map the user's question to lens output fields.
 
 2. **Call `lookup_photo`** with `imageUrl` (or `sha256` if known).
-   - Free. Inspect `results[sha256].photo.lenses`.
+   - Free. The result is `{ matchType, photo?, hammingDistance?, pdqDistance?, computedHashes?, receipts, credentials?, resource? }` for the one image.
+   - On a match (`matchType` is `exact`, `pixels`, `pdq` or `fuzzy`), `photo.lenses` maps each cached lens name to its last output, e.g. `photo.lenses.dating.output`.
 
 3. **Check coverage.** Compare the lenses you need (step 1) against the lenses already cached (step 2).
    - **All needed lenses cached** → use the cached output. Tell the user this came from the registry: zero credits spent.
    - **Some missing** → call `analyze_photo` with `lenses: [...]` containing ONLY the missing lenses.
-   - **Lookup returned nothing** → call `analyze_photo` with the lens subset you decided on.
+   - **`matchType` is `none`** → the photo has never been analyzed; call `analyze_photo` with the lens subset you decided on.
 
 4. **Surface the credit cost** from `usage.creditsCharged` in the analyze response.
 
@@ -34,7 +35,7 @@ When checking whether a local photo is already in the registry, call `lookup_pho
 1. Compute the file's sha256 locally and check for an exact-bytes match (cheap, no image upload required).
 2. On miss, send the image bytes so the server can check for perceptually-similar matches via pHash (catches resized / re-encoded variants).
 
-Both calls are free — lookup never costs credits. So the cost of checking is always zero, no matter how the cascade resolves. This is the "always lookup first" pattern made painless for local files.
+Both calls are free: lookup never costs credits. So the cost of checking is always zero, no matter how the cascade resolves. This is the "always lookup first" pattern made painless for local files.
 
 ## Cost reminders
 - 1 credit per lens (= $0.01).

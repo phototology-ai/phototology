@@ -45,33 +45,33 @@ function extractErrorCode(result: ToolResult): string | undefined {
 function enrich(toolName: string, result: ToolResult): Partial<ToolOutcome> {
   try {
     if (toolName === 'analyze_photo') {
-      const parsed = JSON.parse(result?.content?.[0]?.text ?? '{}');
+      // The typed envelope: usage.creditsCharged, usage.modulesUsed, and a
+      // boolean cacheHit (the API's meta.cacheHit, normalized) so the PostHog
+      // cache-hit rate is computable from every analyze_photo event.
+      const sc = result?.structuredContent as { usage?: { creditsCharged?: unknown; modulesUsed?: unknown }; cacheHit?: unknown } | undefined;
       const out: Partial<ToolOutcome> = {};
-      if (typeof parsed?.usage?.creditsCharged === 'number') out.creditsCharged = parsed.usage.creditsCharged;
-      if (Array.isArray(parsed?.usage?.modulesUsed)) out.lensCount = parsed.usage.modulesUsed.length;
-      // The API sets meta.cacheHit:true only on a full registry cache hit;
-      // fresh/partial runs omit it. Normalize to an explicit boolean so the
-      // PostHog cache-hit rate is computable from every analyze_photo event.
-      out.cacheHit = parsed?.meta?.cacheHit === true;
+      if (typeof sc?.usage?.creditsCharged === 'number') out.creditsCharged = sc.usage.creditsCharged;
+      if (Array.isArray(sc?.usage?.modulesUsed)) out.lensCount = sc.usage.modulesUsed.length;
+      out.cacheHit = sc?.cacheHit === true;
       return out;
     }
     if (toolName === 'analyze_batch') {
-      // analyze_batch exposes the payload directly on structuredContent.
-      const sc = result?.structuredContent;
+      const summary = result?.structuredContent?.summary as { photos?: unknown; cacheHits?: unknown; creditsCharged?: unknown; dryRun?: unknown } | undefined;
+      // A dry run analyzes nothing; counting its lookups as cache hits would
+      // skew the cache-hit rate, so it reports only ok and duration.
+      if (summary?.dryRun === true) return {};
       const out: Partial<ToolOutcome> = {};
-      if (typeof sc?.totalSubmitted === 'number') out.photoCount = sc.totalSubmitted as number;
-      if (typeof sc?.totalCacheHits === 'number') out.cacheHits = sc.totalCacheHits as number;
-      if (typeof sc?.totalCreditsCharged === 'number') out.creditsCharged = sc.totalCreditsCharged as number;
+      if (typeof summary?.photos === 'number') out.photoCount = summary.photos;
+      if (typeof summary?.cacheHits === 'number') out.cacheHits = summary.cacheHits;
+      if (typeof summary?.creditsCharged === 'number') out.creditsCharged = summary.creditsCharged;
       return out;
     }
     if (toolName === 'enrich_photo') {
-      // EnrichResponse carries credits at meta.creditsCharged; the outputPath
-      // save path lifts it to a top-level creditsCharged. No usage/modulesUsed.
-      const parsed = JSON.parse(result?.content?.[0]?.text ?? '{}');
-      const credits = typeof parsed?.meta?.creditsCharged === 'number'
-        ? parsed.meta.creditsCharged
-        : (typeof parsed?.creditsCharged === 'number' ? parsed.creditsCharged : undefined);
-      return credits !== undefined ? { creditsCharged: credits } : {};
+      // The typed envelope's usage.creditsCharged is the canonical cost on
+      // every path (bytes returned, saved to outputPath, or sidecar). No
+      // modulesUsed, so no lensCount.
+      const usage = result?.structuredContent?.usage as { creditsCharged?: unknown } | undefined;
+      return typeof usage?.creditsCharged === 'number' ? { creditsCharged: usage.creditsCharged } : {};
     }
   } catch { /* shape drift — emit the base event without enrichment */ }
   return {};
@@ -132,8 +132,11 @@ function instrumentServer(server: McpServer, opts: TelemetryOpts): McpServer {
  * tool name, ok/duration, an error code on failure (including local failures
  * that never reach the API), and analyze enrichment — the visibility the
  * route-based `api_request` events can't provide.
+ *
+ * Returns the client so `registerResources` reads through the same instance
+ * (one connection pool, one user agent).
  */
-export function registerTools(server: McpServer, apiKey: string, userAgent?: string): void {
+export function registerTools(server: McpServer, apiKey: string, userAgent?: string): PhototologyClient {
   const client = new PhototologyClient({
     apiKey,
     baseUrl: process.env.PHOTOTOLOGY_BASE_URL,
@@ -153,4 +156,6 @@ export function registerTools(server: McpServer, apiKey: string, userAgent?: str
   registerGetCredits(s, client);
   registerPurchaseCredits(s);
   registerEnrichPhoto(s, client);
+
+  return client;
 }

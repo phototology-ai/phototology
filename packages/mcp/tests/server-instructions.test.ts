@@ -27,8 +27,16 @@ jest.mock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
 }));
 
 // Skip the tool registration entirely; we're testing instructions text only.
+// registerTools returns the client index.ts uses for its startup key check.
 jest.mock('../src/tools', () => ({
-  registerTools: jest.fn(),
+  registerTools: jest.fn().mockReturnValue({
+    modules: jest.fn().mockResolvedValue({ modules: [], presets: [] }),
+  }),
+}));
+
+// Same for resources: the stubbed McpServer has no registerResource.
+jest.mock('../src/resources', () => ({
+  registerResources: jest.fn(),
 }));
 
 // Stub the SDK so the lens-fields lookup at instruction-build time doesn't

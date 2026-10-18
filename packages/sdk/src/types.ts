@@ -122,6 +122,10 @@ export interface AnalyzeUsage {
   modulesUsed: string[];
   /** Number of credits charged for this analysis. */
   creditsCharged?: number;
+  /** Billable lens runs served from the cache instead of charged. 0 on a fresh run. */
+  creditsSaved?: number;
+  /** Dollar equivalents at $0.01 per credit, as strings with two decimals (e.g. "0.05"). */
+  usd?: { charged: string; saved: string };
 }
 
 /** Vendor of the AI model that produced the analysis. EU AI Act Art. 50 disclosure. */

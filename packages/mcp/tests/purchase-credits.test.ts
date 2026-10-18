@@ -81,3 +81,42 @@ describe('purchase_credits tool', () => {
     void instance;
   });
 });
+
+describe('purchase_credits typed result', () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { PurchaseCreditsOutputSchema } = require('../src/schemas');
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { registerPurchaseCredits } = require('../src/tools/purchase-credits');
+
+  it('registers the purchase_credits output schema and its result validates', async () => {
+    const server = new McpServer({ name: 'test', version: '0.0.1' });
+    const spy = jest.spyOn(server, 'registerTool');
+    registerPurchaseCredits(server);
+    const call = spy.mock.calls.find((c) => c[0] === 'purchase_credits')!;
+    expect((call[1] as any).outputSchema).toBe(PurchaseCreditsOutputSchema);
+    const result = await (call[2] as any)({});
+    expect(PurchaseCreditsOutputSchema.safeParse(result.structuredContent).success).toBe(true);
+  });
+
+  it('passes the MCP SDK output validation end to end', async () => {
+    const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
+    const { InMemoryTransport } = require('@modelcontextprotocol/sdk/inMemory.js');
+    const server = new McpServer({ name: 'test', version: '0.0.1' });
+    registerPurchaseCredits(server);
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const mcpClient = new Client({ name: 'c', version: '0.0.1' });
+    await mcpClient.connect(clientTransport);
+    try {
+      const { tools } = await mcpClient.listTools();
+      const tool = tools.find((t: any) => t.name === 'purchase_credits');
+      expect(tool.outputSchema.properties).toEqual(expect.objectContaining({ url: expect.anything(), actions: expect.anything() }));
+      const result = await mcpClient.callTool({ name: 'purchase_credits', arguments: {} });
+      expect(result.isError).toBeFalsy();
+      expect((result.structuredContent as any).url).toContain('utm_source=mcp');
+    } finally {
+      await mcpClient.close();
+      await server.close();
+    }
+  });
+});

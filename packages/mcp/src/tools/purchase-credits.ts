@@ -1,4 +1,5 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { PurchaseCreditsOutputSchema } from '../schemas';
 
 const WALLET_URL = 'https://phototology.com/wallet';
 
@@ -39,8 +40,9 @@ export function registerPurchaseCredits(server: McpServer): void {
         '',
         'No subscriptions. Pay-as-you-go via packs only. New accounts start with 1,000 free credits, granted when they verify their email. The signup grant is one-time, not recurring.',
         '',
-        'Returns: `{ url }`. The `structuredContent.actions[0]` is an `open_url` action so rich-rendering clients show it as a button.',
+        'Returns: `{ url, actions }`. `actions[0]` is an `open_url` action so rich-rendering clients show it as a button.',
       ].join('\n'),
+      outputSchema: PurchaseCreditsOutputSchema,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -57,7 +59,7 @@ export function registerPurchaseCredits(server: McpServer): void {
           ...payload,
           actions: [
             {
-              type: 'open_url',
+              type: 'open_url' as const,
               label: 'Open the Phototology wallet to buy credits',
               url,
             },

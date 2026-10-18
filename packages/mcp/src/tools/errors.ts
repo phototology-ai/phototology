@@ -67,7 +67,7 @@ export function renderToolError(err: unknown): RenderedError {
     // input, filename, or lens names.
     const lines = [
       `OUT_OF_CREDITS: Balance ${err.totalBalance}, need ${err.creditsRequired} credits. ` +
-        `This is NOT retryable — re-calling analyze_photo will fail again until a human adds credits. ` +
+        `This is NOT retryable. Re-calling analyze_photo will fail again until a human adds credits. ` +
         `Agents cannot purchase; checkout requires a human in a browser.`,
       `ACTION: tell your user to open ${err.purchaseUrl} and buy credits ` +
         `(first purchase doubles, so Starter $10 buys 2,000 credits the first time).`,

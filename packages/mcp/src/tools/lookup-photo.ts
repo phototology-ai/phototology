@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { PhototologyClient } from '@phototology/sdk';
+import type { PhototologyClient, LookupResponse } from '@phototology/sdk';
 import { renderToolError } from './errors';
 import {
   readImage,
@@ -9,6 +9,8 @@ import {
   validateBase64,
   LocalImageError,
 } from '../lib/local-image';
+import { toLookupEnvelope, photoResourceLink } from '../lib/envelope';
+import { LookupPhotoOutputSchema } from '../schemas';
 
 const LookupInputSchema = {
   imageUrl: z.string().url().optional()
@@ -18,12 +20,24 @@ const LookupInputSchema = {
   pHash: z.string().length(16).regex(/^[0-9a-f]+$/, 'pHash must be 16-char lowercase hex').optional()
     .describe('Perceptual hash (16-char lowercase hex). Direct lookup; skips the cascade. Use when you already have a pHash from a prior call.'),
   imagePath: z.string().optional()
-    .describe('Absolute local-filesystem path on the machine running the MCP server. The MCP runs a transparent sha256→pHash cascade: cheap exact-bytes match first, then on miss falls through to perceptually-similar match via server-side pHash. Both calls are free. NOT for paths inside an agent sandbox (e.g. Claude\'s /mnt/user-data/uploads/...) — that sandbox is invisible to a locally-installed MCP; use imageBase64 or imageUrl for those. Accepts absolute (/Users/...) or ~/-prefixed paths; relative paths are rejected.'),
+    .describe('Absolute local-filesystem path on the machine running the MCP server. The MCP runs a transparent sha256→pHash cascade: cheap exact-bytes match first, then on miss falls through to perceptually-similar match via server-side pHash. Both calls are free. NOT for paths inside an agent sandbox (e.g. Claude\'s /mnt/user-data/uploads/...); that sandbox is invisible to a locally-installed MCP; use imageBase64 or imageUrl for those. Accepts absolute (/Users/...) or ~/-prefixed paths; relative paths are rejected.'),
   imageBase64: z.string().optional()
     .describe('Base64-encoded image bytes (no data: URL prefix). The MCP runs the same sha256→pHash cascade as imagePath. Both calls are free. Useful for small images (under ~150KB JPEG / ~200K base64 chars); for larger files prefer imageUrl.'),
   threshold: z.number().int().min(0).max(64).optional()
     .describe('Hamming-distance threshold for pHash fuzzy matching (0-64). Default 5. Lower = stricter; higher = more matches but less precise.'),
 };
+
+/** The tool result: the flattened envelope as text and structured content, plus a resource link on a match. */
+function lookupResult(res: LookupResponse, knownSha256?: string) {
+  const { envelope, sha256 } = toLookupEnvelope(res, knownSha256);
+  return {
+    content: [
+      { type: 'text' as const, text: JSON.stringify(envelope, null, 2) },
+      ...(sha256 ? [photoResourceLink(sha256)] : []),
+    ],
+    structuredContent: envelope,
+  };
+}
 
 interface LookupArgs {
   imageUrl?: string;
@@ -46,13 +60,14 @@ export function registerLookupPhoto(server: McpServer, client: PhototologyClient
         '',
         'Use this before `analyze_photo` whenever possible. Phototology is a registry: any photo ever analyzed (by any user on the same account) is returned here without re-running the LLM.',
         '',
-        'If the photo is local, pass `imagePath` — the MCP runs a transparent sha256→pHash cascade against the registry. Both lookup paths are free. If you only have a hash, pass `sha256` or `pHash` directly to skip the file work.',
+        'If the photo is local, pass `imagePath` and the MCP runs a transparent sha256→pHash cascade against the registry. Both lookup paths are free. If you only have a hash, pass `sha256` or `pHash` directly to skip the file work.',
         '',
         'Input: exactly one of `imageUrl` (server fetches and hashes), `sha256` (direct hash lookup), `pHash` (direct perceptual-hash lookup), `imagePath` (local file, cascade), or `imageBase64` (in-memory bytes, cascade). When passing a URL or local file, perceptual-hash matching also catches re-encodes and re-uploads of the same image.',
         '',
-        'Returns `results[sha256].photo.lenses` — a map from lens name to its last-cached output. An empty `lenses` map means the photo has never been analyzed on this account.',
+        'Returns `{ matchType, photo?, hammingDistance?, pdqDistance?, computedHashes?, receipts, credentials?, resource? }` for the one image asked about. `matchType` is `exact` (same file bytes), `pixels` (same decoded pixels in a different file), `pdq` (a PDQ perceptual match, with `pdqDistance`), `fuzzy` (a pHash perceptual match, with `hammingDistance`) or `none`. On anything but `exact`, `photo` is the registry record that matched, not the submitted image. On a match, `photo.lenses` maps each lens name to its last-cached output, and `resource` (also sent as a resource link) reads this registry record later for free. On `none` the photo has never been analyzed on this account: there is no `photo` and no `resource`, and `analyze_photo` is the next step.',
       ].join('\n'),
       inputSchema: LookupInputSchema,
+      outputSchema: LookupPhotoOutputSchema,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -85,27 +100,21 @@ export function registerLookupPhoto(server: McpServer, client: PhototologyClient
             sha256,
             ...(threshold !== undefined ? { threshold } : {}),
           });
-          return {
-            content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-          };
+          return lookupResult(result, sha256);
         }
         if (pHash !== undefined && pHash !== '') {
           const result = await client.lookup({
             pHash,
             ...(threshold !== undefined ? { threshold } : {}),
           });
-          return {
-            content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-          };
+          return lookupResult(result);
         }
         if (imageUrl !== undefined && imageUrl !== '') {
           const result = await client.lookup({
             images: [imageUrl],
             ...(threshold !== undefined ? { threshold } : {}),
           });
-          return {
-            content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-          };
+          return lookupResult(result);
         }
 
         // Local input modes (imagePath or imageBase64): sha256→pHash cascade.
@@ -133,9 +142,7 @@ export function registerLookupPhoto(server: McpServer, client: PhototologyClient
         // matchType 'exact' (sha256 match) OR rarely 'fuzzy' (pHash collision with
         // near-zero phash). Either means Step 2 has nothing left to add.
         if (exactEntry && exactEntry.matchType !== 'none') {
-          return {
-            content: [{ type: 'text' as const, text: JSON.stringify(exact, null, 2) }],
-          };
+          return lookupResult(exact, sha);
         }
 
         // Step 2: send image bytes so the server can compute pHash and check
@@ -145,9 +152,7 @@ export function registerLookupPhoto(server: McpServer, client: PhototologyClient
           imagesBase64: [b64],
           ...(threshold !== undefined ? { threshold } : {}),
         });
-        return {
-          content: [{ type: 'text' as const, text: JSON.stringify(fuzzy, null, 2) }],
-        };
+        return lookupResult(fuzzy, sha);
       } catch (err: unknown) {
         return renderToolError(err);
       }

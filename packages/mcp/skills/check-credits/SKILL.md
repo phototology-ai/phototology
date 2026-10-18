@@ -9,14 +9,14 @@ description: Use when the user asks about their Phototology credit balance, when
 - The user asks "how many credits do I have left?" or any balance question.
 - Before any batch of more than ~5 `analyze_photo` calls.
 - Before a `bespoke` analyze call (5 credits).
-- Before the `full-analysis` stack (runs every lens — call `list_lenses` for the current catalog size).
+- Before the `full-analysis` stack (runs every lens; call `list_lenses` for its per-photo price).
 
 ## Steps
 
 1. Call `get_credits`. Free, instant.
-2. Report the balance plainly. Example:
-   > You have **998 credits** available (1,000 signup grant + 0 purchased − 2 reserved). New users start with 1,000 free credits, granted when they verify their email.
-3. If `community.balance + purchased.balance - reserved < estimated cost of the next operation`:
+2. Report the balance plainly. The result always carries `total` (the spendable balance) and `usd` (its dollar value); `reserved` (credits held for calls in progress) may be absent, which means 0. Example:
+   > You have **1,000 credits** ($10.00). 2 are held for a call in progress, so 998 are free to spend.
+3. If `total - reserved < estimated cost of the next operation`:
    - Tell the user how many credits the operation will need.
    - Offer three options: **(a)** proceed anyway (will hit the out-of-credits error), **(b)** reduce scope to fewer lenses, or **(c)** buy more credits.
    - If they pick (c), call `purchase_credits` and surface the URL.

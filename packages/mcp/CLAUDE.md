@@ -1,5 +1,5 @@
 # @phototology/mcp Development Protocol
-> **Version:** 1.3.0 | **Architecture:** MCP stdio server wrapping @phototology/sdk | **Updated:** 2026-06-02
+> **Version:** 1.3.0 | **Architecture:** MCP stdio server wrapping @phototology/sdk | **Updated:** 2026-10-17
 
 ## What This Is
 
@@ -12,6 +12,16 @@ Stdio MCP server that exposes `@phototology/sdk` as seven Model Context Protocol
 - `CreditExhaustedError` now returns `structuredContent.actions` with a typed `open_url` action so rich-rendering clients can show a button.
 - Five companion skills ship in the npm package: `phototology:lookup-first`, `phototology:check-credits`, `phototology:smart-stack`, `phototology:photo-shared`, `phototology:batch-analyze`.
 - Every tool declares full annotations (`readOnlyHint`, `destructiveHint: false`, `idempotentHint`, `openWorldHint`).
+
+**Unreleased: typed results (gold-standard row 5, 2026-10-17).** Every tool registers `outputSchema` as its Zod envelope from `src/schemas/envelopes.ts` (the MCP SDK rejects a plain JSON Schema there) and returns `structuredContent` that matches it, beside the same JSON as a text block. Every envelope is a loose object, so an API field added later never fails a client. Shapes:
+- `analyze_photo`: `{ photo: { sha256, pHash, dHash, ... }, output, lenses, usage: { creditsCharged, creditsSaved, usd: { charged, saved }, modulesUsed }, cacheHit, receipts, credentials?, resource?, livemode }`, plus a `resource_link` to the photo when it has a name.
+- `analyze_batch`: `{ summary: { photos, cacheHits, analyzed, errors, creditsCharged, creditsSaved, usd: { charged, saved }, estimate: { photos, cacheHits, creditsNeeded, usd } | null, dryRun?, warnings? }, results[] }`. `estimate` is null, with `warnings: ['ESTIMATE_UNAVAILABLE']`, when a stack cannot be priced because the lens catalog is unreachable. A row is the `analyze_photo` envelope plus `input` (and `matchType` when the registry served it), or `{ input, error: { code, message } }`. `dryRun: true` bills nothing and returns rows of `{ input, matchType, cachedLenses, missingLenses, resource? }`.
+- `lookup_photo`: flattened to the one image asked about: `{ matchType, photo?, hammingDistance?, pdqDistance?, computedHashes?, receipts, credentials?, resource? }`. `matchType` is `exact`, `pixels`, `pdq`, `fuzzy` or `none`; cached lens output is at `photo.lenses.<lens>.output`.
+- `list_lenses`: `{ lenses: [{ name, description, category, outputFields, billable, credits, defaultColumns, internal? }], stacks: [{ name, description, lenses, credits, usdPerPhoto }] }`.
+- `get_credits`: `{ total, usd, tier?, community?, purchased?, reserved? }`. Only `total` and `usd` are required.
+- `purchase_credits`: `{ url, actions: [{ type: 'open_url', label, url }] }`.
+- `enrich_photo`: `{ mode: 'file' | 'sidecar', savedTo?, sidecarSavedTo?, imageBase64?, sidecar?: { xmp }, formatsWritten, lensVersions, sha256, registryId?, credentials?, reason?, usage: { creditsCharged, usd: { charged } }, warnings?, meta? }`. `usage.creditsCharged` is the canonical cost (telemetry reads it); `meta.creditsCharged` passes through for compatibility. When the API returns bytes, the result also carries an `image` content block: a JPEG preview from `src/lib/preview.ts` (sharp, EXIF rotation applied, longest edge 1024 px without upscaling, quality 80). `imageBase64` is dropped when `outputPath` was given (`savedTo` names the file instead). `sidecarSavedTo` is declared in the schema but not yet written (the sidecar file lands with a later row). A response with no bytes (`mode: 'sidecar'`) writes nothing and has no preview; a preview that fails (undecodable bytes, or sharp's native binary failing to load, since `makePreview` imports sharp lazily) adds a `warnings` entry and never fails the paid call.
+- Resources: `phototology://lenses` (the `list_lenses` catalog) and `phototology://photo/{sha256}` (one registry record, free to read; `PHOTO_NOT_IN_REGISTRY` text when absent). Analyze, batch and lookup results link to the photo resource.
 
 **1.0.0 breaking change (2026-04-17):** `lookup_photo` returns the Registry v2 shape — `photo.lenses` keyed map, not `analyses[]`. `analyze_photo` accepts `refresh?: boolean` to bypass the per-user-per-photo projection cache.
 
@@ -35,14 +45,18 @@ Stdio MCP server that exposes `@phototology/sdk` as seven Model Context Protocol
 | `src/tools/index.ts` | Barrel. Instantiates the `PhototologyClient` once and calls each per-tool register function. |
 | `src/tools/errors.ts` | `renderToolError()` + `ToolAction` type. Maps SDK errors to MCP tool-result shape, with `structuredContent.actions` on `CreditExhaustedError`. |
 | `src/tools/analyze-photo.ts` | `analyze_photo` tool. Accepts `lenses`/`stack` (preferred) or legacy `modules`/`preset`. Translates to SDK args. |
-| `src/tools/analyze-batch.ts` | `analyze_batch` tool. 1-200 photos per call. Lookup-first internally (per-URL, concurrency 20), analyzes cache-misses with bounded concurrency (`ANALYZE_CONCURRENCY = 25`), surfaces `totalCacheHits`/`estimatedCreditsSaved`. |
+| `src/tools/analyze-batch.ts` | `analyze_batch` tool. 1-200 photos per call. Lookup-first internally (concurrency 20), analyzes cache-misses with bounded concurrency (`ANALYZE_CONCURRENCY = 5`, the API's per-user cap). Returns `{ summary, results }`; `dryRun: true` prices the batch without billing. |
 | `src/tools/list-lenses.ts` | `list_lenses` tool. Reshapes the SDK's `{ modules, presets }` into MCP-facing `{ lenses, stacks }`. |
-| `src/tools/lookup-photo.ts` | `lookup_photo` tool. Free. |
-| `src/tools/get-credits.ts` | `get_credits` tool. Free. Wraps `client.usage()` for dual-pool balance reads. |
+| `src/tools/lookup-photo.ts` | `lookup_photo` tool. Free. Flattens the SDK's `results` map to the one image asked about. |
+| `src/tools/get-credits.ts` | `get_credits` tool. Free. Wraps `client.usage()`; adds `usd`, and sums `total` from the pools when an older API omits it. |
 | `src/tools/purchase-credits.ts` | `purchase_credits` tool. Free. Returns the wallet deep-link with `utm_source=mcp` and a structured `open_url` action. |
-| `src/tools/enrich-photo.ts` | `enrich_photo` tool. Writes cached lens output into the photo's EXIF/IPTC/XMP metadata (defaults to `["xmp"]`); optional `outputPath` writes enriched bytes to disk. Requires a prior analyze. 5 credits per call. Wraps `client.enrich()`. |
+| `src/tools/enrich-photo.ts` | `enrich_photo` tool. Writes cached lens output into the photo's EXIF/IPTC/XMP metadata (defaults to `["xmp"]`); optional `outputPath` writes enriched bytes to disk. Requires a prior analyze. 5 credits per call. Wraps `client.enrich()`. Returns a JPEG preview `image` block when there are bytes. |
+| `src/lib/envelope.ts` | Builds each tool's `structuredContent` from the SDK response (`toAnalyzeEnvelope`, `toLookupEnvelope`, `toEnrichEnvelope`), credit to dollar conversion, photo resource links. |
+| `src/lib/preview.ts` | `makePreview()`: the downscaled JPEG `enrich_photo` returns. |
+| `src/schemas/` | Zod output envelopes for all seven tools; the lens output schema is generated from the SDK's `LENS_FIELDS`. |
+| `src/resources/index.ts` | `phototology://lenses` and `phototology://photo/{sha256}` resources. |
 
-Tools are `readOnlyHint: true`, `destructiveHint: false`. Successful results return `{ content: [{ type: 'text', text: JSON }] }` plus optional `structuredContent` for rich clients.
+Every tool declares `destructiveHint: false`; all but `enrich_photo` (which writes bytes) are `readOnlyHint: true`. Successful results return the envelope twice: as JSON in a text block and as `structuredContent` validated against the tool's `outputSchema`.
 
 ## Companion Skills
 

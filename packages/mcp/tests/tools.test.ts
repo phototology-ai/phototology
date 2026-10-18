@@ -67,6 +67,15 @@ describe('registerTools', () => {
     ]);
   });
 
+  it('returns the single client the tools use, so resources share it', () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { PhototologyClient } = require('@phototology/sdk');
+    (PhototologyClient as jest.Mock).mockClear();
+    const client = registerTools(server, 'pt_test_abc123', '@phototology/mcp/9.9.9');
+    expect(PhototologyClient).toHaveBeenCalledTimes(1);
+    expect(client).toBe((PhototologyClient as jest.Mock).mock.results[0].value);
+  });
+
   it('marks every tool destructiveHint:false; only enrich_photo is non-read-only (it writes bytes)', () => {
     const toolSpy = jest.spyOn(server, 'registerTool');
     registerTools(server, 'pt_test_abc123');
@@ -119,6 +128,38 @@ describe('tool description quality (Glama rubric floor — B2)', () => {
       // when-to-use trigger
       expect(desc).toMatch(/\buse (this|it|when)\b|useful when|when to use|call this|whenever|before any/i);
     }
+  });
+
+  /** Every agent-visible string a tool registers: its description and each input field's description. */
+  function agentVisibleCopy(): Record<string, string> {
+    const server = new McpServer({ name: 'test', version: '0.0.1' });
+    const spy = jest.spyOn(server, 'registerTool');
+    registerTools(server, 'pt_test_abc123');
+    const out: Record<string, string> = {};
+    for (const [name, config] of spy.mock.calls as unknown as Array<[string, { description: string; inputSchema?: Record<string, { description?: string }> }]>) {
+      out[name] = config.description;
+      for (const [field, schema] of Object.entries(config.inputSchema ?? {})) {
+        if (schema.description) out[`${name}.${field}`] = schema.description;
+      }
+    }
+    return out;
+  }
+
+  it('agent-visible copy carries no em dash, no lens count and no hard-coded catalog facts', () => {
+    for (const [where, text] of Object.entries(agentVisibleCopy())) {
+      expect({ where, emDash: /\u2014/.test(text) }).toEqual({ where, emDash: false });
+      // Lens counts and prices drift with the catalog; list_lenses is the source.
+      expect({ where, lensCount: /~?\d+ (billable )?lenses/.test(text) }).toEqual({ where, lensCount: false });
+      expect({ where, price: /"0\.14"/.test(text) }).toEqual({ where, price: false });
+      expect({ where, list: /currently just/.test(text) }).toEqual({ where, list: false });
+      expect({ where, stale: /`automobile` \+ `vehicle-condition`/.test(text) }).toEqual({ where, stale: false });
+    }
+  });
+
+  it('the Returns lines name the optional fields an agent can actually receive', () => {
+    const d = descriptions();
+    expect(d.analyze_photo).toContain('resource?, livemode }');
+    expect(d.enrich_photo).toMatch(/Returns `\{[^`]*warnings\?[^`]*meta[^`]*\}`/);
   });
 
   it('the lifted FLOOR (get_credits + purchase_credits) carries an explicit when-NOT-to-use anti-trigger', () => {

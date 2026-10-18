@@ -200,3 +200,144 @@ describe('lookup_photo input validation', () => {
     expect(lookup).not.toHaveBeenCalled();
   });
 });
+
+describe('lookup_photo typed result', () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { LookupPhotoOutputSchema } = require('../src/schemas');
+
+  const SHA = 'a'.repeat(64);
+  const RECORD = {
+    sha256: SHA,
+    pHash: 'f0f0f0f0f0f0f0f0',
+    dHash: '0f0f0f0f0f0f0f0f',
+    firstAnalyzedAt: '2026-10-01T00:00:00.000Z',
+    lastAnalyzedAt: '2026-10-02T00:00:00.000Z',
+    totalCreditsSpent: 2,
+    analyzeCallCount: 1,
+    lenses: {
+      dating: {
+        eventId: 'evt_1', output: { estimatedDate: { year: 1990 } }, version: '1.0.0',
+        producedAt: '2026-10-01T00:00:00.000Z', coRunHash: 'h', provider: 'gemini',
+      },
+    },
+  };
+  const META = { imagesSubmitted: 1, imagesMatched: 1, processingTimeMs: 3, requestId: 'req_l' };
+  const HIT = { object: 'lookup', results: { [SHA]: { matchType: 'exact', photo: RECORD } }, meta: META };
+  const MISS = { object: 'lookup', results: { [SHA]: { matchType: 'none' } }, meta: { ...META, imagesMatched: 0 } };
+
+  function captureRegistration(client: any): { config: any; handler: (args: any) => Promise<any> } {
+    const server = new McpServer({ name: 'test', version: '0.0.1' });
+    const spy = jest.spyOn(server, 'registerTool');
+    registerLookupPhoto(server, client);
+    const call = spy.mock.calls.find((c) => c[0] === 'lookup_photo')!;
+    return { config: call[1], handler: call[2] as (args: any) => Promise<any> };
+  }
+
+  it('registers the lookup_photo output schema', () => {
+    expect(captureRegistration(makeMockClient(jest.fn())).config.outputSchema).toBe(LookupPhotoOutputSchema);
+  });
+
+  it('a hit returns the single flattened result with a resource and a resource link', async () => {
+    const { handler } = captureRegistration(makeMockClient(jest.fn().mockResolvedValue(HIT)));
+    const result = await handler({ sha256: SHA });
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent;
+    expect(LookupPhotoOutputSchema.safeParse(sc).success).toBe(true);
+    expect(sc.results).toBeUndefined();
+    expect(sc.matchType).toBe('exact');
+    expect(sc.photo).toEqual(RECORD);
+    expect(sc.receipts).toEqual([]);
+    expect('credentials' in sc).toBe(false);
+    expect(sc.resource).toBe(`phototology://photo/${SHA}`);
+    expect(result.content[0]).toEqual({ type: 'text', text: JSON.stringify(sc, null, 2) });
+    expect(result.content).toContainEqual({
+      type: 'resource_link', uri: `phototology://photo/${SHA}`, name: SHA, mimeType: 'application/json',
+    });
+  });
+
+  it('a miss has no resource and no resource link', async () => {
+    const { handler } = captureRegistration(makeMockClient(jest.fn().mockResolvedValue(MISS)));
+    const result = await handler({ sha256: SHA });
+    const sc = result.structuredContent;
+    expect(LookupPhotoOutputSchema.safeParse(sc).success).toBe(true);
+    expect(sc.matchType).toBe('none');
+    expect(sc.receipts).toEqual([]);
+    expect('resource' in sc).toBe(false);
+    expect(result.content.some((c: any) => c.type === 'resource_link')).toBe(false);
+  });
+
+  it('an empty results map reads as a miss', async () => {
+    const { handler } = captureRegistration(makeMockClient(jest.fn().mockResolvedValue({ object: 'lookup', results: {}, meta: META })));
+    const sc = (await handler({ imageUrl: 'https://example.com/a.jpg' })).structuredContent;
+    expect(LookupPhotoOutputSchema.safeParse(sc).success).toBe(true);
+    expect(sc.matchType).toBe('none');
+  });
+
+  it('a fuzzy cascade hit links the matched record and keeps distance and computed hashes', async () => {
+    const other = 'b'.repeat(64);
+    const lookup = jest.fn()
+      .mockResolvedValueOnce({ object: 'lookup', results: { [SHA256_OF_JPEG_BYTES]: { matchType: 'none' } }, meta: META })
+      .mockResolvedValueOnce({
+        object: 'lookup',
+        results: {
+          [SHA256_OF_JPEG_BYTES]: {
+            matchType: 'fuzzy', hammingDistance: 3, photo: { ...RECORD, sha256: other },
+            computedHashes: { sha256: SHA256_OF_JPEG_BYTES, pHash: '1111111111111111', dHash: '2222222222222222' },
+          },
+        },
+        meta: META,
+      });
+    const { handler } = captureRegistration(makeMockClient(lookup));
+    const result = await handler({ imageBase64: JPEG_BYTES.toString('base64') });
+    const sc = result.structuredContent;
+    expect(LookupPhotoOutputSchema.safeParse(sc).success).toBe(true);
+    expect(sc.matchType).toBe('fuzzy');
+    expect(sc.hammingDistance).toBe(3);
+    expect(sc.computedHashes.sha256).toBe(SHA256_OF_JPEG_BYTES);
+    expect(sc.resource).toBe(`phototology://photo/${other}`);
+    expect(result.content).toContainEqual(expect.objectContaining({ type: 'resource_link', name: other }));
+  });
+
+  it('a cascade hit with no record still links the photo by the hash of its bytes', async () => {
+    const lookup = jest.fn().mockResolvedValueOnce({ results: { [SHA256_OF_JPEG_BYTES]: { matchType: 'exact' } } });
+    const { handler } = captureRegistration(makeMockClient(lookup));
+    const sc = (await handler({ imageBase64: JPEG_BYTES.toString('base64') })).structuredContent;
+    expect(sc.resource).toBe(`phototology://photo/${SHA256_OF_JPEG_BYTES}`);
+  });
+
+  it('a direct sha256 hit with no record links the photo by the sha256 the caller passed', async () => {
+    const lookup = jest.fn().mockResolvedValue({ object: 'lookup', results: { [SHA]: { matchType: 'exact' } }, meta: META });
+    const sc = (await captureRegistration(makeMockClient(lookup)).handler({ sha256: SHA })).structuredContent;
+    expect(sc.resource).toBe(`phototology://photo/${SHA}`);
+  });
+
+  it('passes receipts and credentials through when the API sends them', async () => {
+    const withProof = { ...HIT, results: { [SHA]: { matchType: 'exact', photo: RECORD, receipts: [{ id: 'r1' }], credentials: { present: false } } } };
+    const { handler } = captureRegistration(makeMockClient(jest.fn().mockResolvedValue(withProof)));
+    const sc = (await handler({ sha256: SHA })).structuredContent;
+    expect(sc.receipts).toEqual([{ id: 'r1' }]);
+    expect(sc.credentials).toEqual({ present: false });
+  });
+
+  it('passes the MCP SDK output validation end to end', async () => {
+    const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
+    const { InMemoryTransport } = require('@modelcontextprotocol/sdk/inMemory.js');
+    const server = new McpServer({ name: 'test', version: '0.0.1' });
+    registerLookupPhoto(server, makeMockClient(jest.fn().mockResolvedValue(HIT)));
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const mcpClient = new Client({ name: 'c', version: '0.0.1' });
+    await mcpClient.connect(clientTransport);
+    try {
+      const { tools } = await mcpClient.listTools();
+      const tool = tools.find((t: any) => t.name === 'lookup_photo');
+      expect(tool.outputSchema.properties).toEqual(expect.objectContaining({ matchType: expect.anything(), receipts: expect.anything() }));
+      const result = await mcpClient.callTool({ name: 'lookup_photo', arguments: { sha256: SHA } });
+      expect(result.isError).toBeFalsy();
+      expect((result.structuredContent as any).resource).toBe(`phototology://photo/${SHA}`);
+    } finally {
+      await mcpClient.close();
+      await server.close();
+    }
+  });
+});

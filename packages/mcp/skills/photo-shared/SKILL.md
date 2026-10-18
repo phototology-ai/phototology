@@ -15,7 +15,7 @@ The moment the user puts an image into the conversation. Signals include:
 
 ## How the image reaches Phototology
 
-When the user attaches, drops, or references a local image (e.g., a file path in their message, an attached file in Claude Code, a screenshot they captured), pass its absolute path (or `~/`-prefixed home path) as `imagePath` to `analyze_photo`. The MCP reads the file locally and forwards the bytes — no need to upload to a public host first. For remote URLs, `imageUrl` still works as before. For base64 bytes you already have in memory, `imageBase64` is the direct path.
+When the user attaches, drops, or references a local image (e.g., a file path in their message, an attached file in Claude Code, a screenshot they captured), pass its absolute path (or `~/`-prefixed home path) as `imagePath` to `analyze_photo`. The MCP reads the file locally and forwards the bytes, so there is no need to upload to a public host first. For remote URLs, `imageUrl` still works as before. For base64 bytes you already have in memory, `imageBase64` is the direct path.
 
 ## What to do
 
@@ -33,12 +33,12 @@ When the user attaches, drops, or references a local image (e.g., a file path in
 
 5. **Optionally pre-check credits** with `get_credits` if you anticipate a multi-lens or full-analysis call. Skip this for cheap 1–2 lens calls.
 
-6. **Surface `usage.creditsCharged` from the analyze response** so the user sees the cost. Then answer the user's question using only the relevant fields from the response — don't dump the entire JSON payload.
+6. **Surface `usage.creditsCharged` from the analyze response** so the user sees the cost. Then answer the user's question using only the relevant fields from the response; don't dump the entire JSON payload.
 
 ## When NOT to use
 
 - The user shared an image but explicitly does not want it analyzed (e.g., "just look at this, don't run anything").
-- The image is a screenshot of code, a terminal, or a UI — those are usually for the model to read directly, not for Phototology's vision lenses.
+- The image is a screenshot of code, a terminal, or a UI; those are usually for the model to read directly, not for Phototology's vision lenses.
 - The user is mid-flow on a non-photo task (debugging, code review) and an image is incidental context.
 
 ## Example flow

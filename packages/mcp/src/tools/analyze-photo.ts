@@ -3,6 +3,8 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { type PhototologyClient, LENS_FIELDS, PRESET_IDS, type LensId } from '@phototology/sdk';
 import { renderToolError } from './errors';
 import { readImage, resolvePath, validateBase64, LocalImageError } from '../lib/local-image';
+import { toAnalyzeEnvelope, photoResourceLink, analyzedPhotoSha256 } from '../lib/envelope';
+import { AnalyzePhotoOutputSchema } from '../schemas';
 
 // `vehicle-condition` is in LENS_FIELDS (owns output) but is STACK-ONLY — the
 // API rejects it on direct selection (moduleComposition.ts INTERNAL_MODULES).
@@ -16,22 +18,22 @@ const AnalyzeInputSchema = {
   imageUrl: z.string().url().optional()
     .describe('Publicly fetchable image URL. JPEG, PNG, GIF, WebP, AVIF, or TIFF (HEIC is not decoded yet; convert to JPEG first). The server fetches it server-side. Use when you have a URL.'),
   imageBase64: z.string().optional()
-    .describe('Base64-encoded image bytes (no data: URL prefix). Useful for small images (under ~150KB JPEG / ~200K base64 chars); for larger files prefer `imageUrl` or `imagePath`. LLM-driven clients exhaust output-token budget before the MCP receives the payload on large base64 strings — a 3.4MB JPEG produces ~4.57M chars.'),
+    .describe('Base64-encoded image bytes (no data: URL prefix). Useful for small images (under ~150KB JPEG / ~200K base64 chars); for larger files prefer `imageUrl` or `imagePath`. LLM-driven clients exhaust output-token budget before the MCP receives the payload on large base64 strings: a 3.4MB JPEG produces ~4.57M chars.'),
   imagePath: z.string().optional()
-    .describe('Absolute local-filesystem path on the machine running the MCP server. The MCP reads the file from disk and forwards bytes to the API. Use this when the photo lives on the user\'s local disk that this MCP process can see. NOT for photos uploaded into an agent\'s sandbox (e.g. Claude\'s /mnt/user-data/uploads/...) — that sandbox is invisible to a locally-installed MCP. For agent-sandboxed uploads, prefer `imageBase64` (small images) or `imageUrl` (hostable images of any size). Accepts absolute (/Users/...) or ~/-prefixed paths; relative paths are rejected.'),
+    .describe('Absolute local-filesystem path on the machine running the MCP server. The MCP reads the file from disk and forwards bytes to the API. Use this when the photo lives on the user\'s local disk that this MCP process can see. NOT for photos uploaded into an agent\'s sandbox (e.g. Claude\'s /mnt/user-data/uploads/...); that sandbox is invisible to a locally-installed MCP. For agent-sandboxed uploads, prefer `imageBase64` (small images) or `imageUrl` (hostable images of any size). Accepts absolute (/Users/...) or ~/-prefixed paths; relative paths are rejected.'),
   stack: z.enum([...PRESET_IDS] as [string, ...string[]])
     .default('full-analysis')
-    .describe('Named bundle of lenses — a stack — to run together. Different stacks contain very different numbers of lenses: `memorial` runs ~15 lenses (~15 credits per uncached photo); `automobile` runs ~3. Call `list_lenses` to see exact stack contents and per-photo cost before committing to a stack on a large batch. Use when the workflow matches the stack name (e.g. `automobile` for vehicle photos, `memorial` for tribute photos). Ignored when `lenses` is provided. (Previously named `preset`; that name is still accepted as a deprecated alias.)'),
+    .describe('Named bundle of lenses (a stack) to run together. Stacks differ widely in size and price. Call `list_lenses` for each stack\'s lenses, its `credits` and its `usdPerPhoto` before committing to a stack on a large batch. Use when the workflow matches the stack name (e.g. `automobile` for vehicle photos, `memorial` for tribute photos). Ignored when `lenses` is provided. (Previously named `preset`; that name is still accepted as a deprecated alias.)'),
   preset: z.enum([...PRESET_IDS] as [string, ...string[]]).optional()
     .describe('Deprecated alias for `stack`. Prefer `stack` in new code.'),
   lenses: z.array(z.enum(LENS_IDS)).optional()
-    .describe('Explicit list of lenses to run. Prefer this over `stack` when you only need a few; it bills only for the lenses you pick. Call `list_lenses` for descriptions of each lens. (The previous parameter name was `modules` — still accepted as an alias during the rename.)'),
+    .describe('Explicit list of lenses to run. Prefer this over `stack` when you only need a few; it bills only for the lenses you pick. Call `list_lenses` for descriptions of each lens. (The previous parameter name was `modules`, still accepted as an alias during the rename.)'),
   modules: z.array(z.enum(LENS_IDS)).optional()
     .describe('Deprecated alias for `lenses`. Prefer `lenses` in new code; this name still works for backward compatibility.'),
   includeEmbedding: z.boolean().default(false)
     .describe('Include the 1408-dim embedding vector for similarity search. Adds tokens to the response; leave false unless you need it.'),
   refresh: z.boolean().optional()
-    .describe('Force the LLM to re-run every requested lens, bypassing the per-account projection cache. Only pass `true` when the user explicitly asks to "re-analyze" or "refresh" — default cache reuse saves credits.'),
+    .describe('Force the LLM to re-run every requested lens, bypassing the per-account projection cache. Only pass `true` when the user explicitly asks to "re-analyze" or "refresh"; default cache reuse saves credits.'),
 };
 
 interface AnalyzeArgs {
@@ -62,17 +64,18 @@ export function registerAnalyzePhoto(server: McpServer, client: PhototologyClien
         '',
         'Before calling this, prefer `lookup_photo` first. If the photo has been analyzed before (any user on this account), the cached lens result is returned for free.',
         '',
-        'Cost: 1 credit per lens ($0.01). The `full-analysis` stack runs every lens in the catalog — call `list_lenses` to see the current count. To stay cheap, pass `lenses: ["dating", "people"]` with only the lenses you need. Re-running the same lens on the same photo costs zero (delta billing).',
+        'Cost: 1 credit per lens ($0.01). The `full-analysis` stack runs every lens in the catalog; call `list_lenses` to see the current count. To stay cheap, pass `lenses: ["dating", "people"]` with only the lenses you need. Re-running the same lens on the same photo costs zero (delta billing).',
         '',
         'Lens / stack selection: call `list_lenses` if you do not know which lens owns the field you need, or which stack matches the workflow. Each lens names its output fields explicitly; each stack names the lenses it contains.',
         '',
-        'Output: flat JSON keyed by field name (e.g. `estimatedDate`, `peopleCount`, `warmCaption`). `usage.creditsCharged` tells you the actual cost. Surface it to the user when greater than zero.',
+        'Output: `{ photo, output, lenses, usage, cacheHit, receipts, credentials?, resource?, livemode }`. `photo` names the image by `sha256` and its perceptual hashes. `output` is flat JSON keyed by field name (e.g. `estimatedDate`, `peopleCount`, `warmCaption`). `usage.creditsCharged` is the actual cost, `usage.creditsSaved` is what the registry saved, and `usage.usd` gives both in dollars. Surface the cost to the user when greater than zero. `resource`, when present (also sent as a resource link), reads this photo\'s registry record later for free; a `pt_test_` result for a URL has none.',
         '',
-        'Test vs live: a `pt_test_` key returns deterministic golden-fixture data, not a real analysis — `livemode` is `false`, `usage.creditsCharged` is `0`, `meta.provider` is `test-sandbox`, and the same payload comes back regardless of the image. Treat `livemode: false` output as an integration/wiring check, never as facts about the actual photo. A `pt_live_` key returns real model output with `livemode: true`.',
+        'Test vs live: a `pt_test_` key returns deterministic golden-fixture data, not a real analysis: `livemode` is `false`, `usage.creditsCharged` is `0`, `meta.provider` is `test-sandbox`, and the same payload comes back regardless of the image. Treat `livemode: false` output as an integration/wiring check, never as facts about the actual photo. A `pt_live_` key returns real model output with `livemode: true`.',
         '',
         'Out of credits: returns an error whose `structuredContent.actions[0].url` is a wallet deep-link. Show the URL to the user verbatim. Do not retry the call.',
       ].join('\n'),
       inputSchema: AnalyzeInputSchema,
+      outputSchema: AnalyzePhotoOutputSchema,
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -119,11 +122,18 @@ export function registerAnalyzePhoto(server: McpServer, client: PhototologyClien
         const result = await client.analyze({
           ...(imageUrl ? { imageUrl } : { imageBase64: resolvedBase64 }),
           ...(chosenLenses ? { modules: chosenLenses } : { preset: chosenStack }),
-          options: { includeEmbedding },
+          // A live fingerprint names the photo in the result and its resource link.
+          options: { includeEmbedding, includeFingerprint: true },
           ...(refresh !== undefined ? { refresh } : {}),
         });
+        const sha256 = analyzedPhotoSha256(result, resolvedBase64);
+        const envelope = toAnalyzeEnvelope(result, sha256);
         return {
-          content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+          content: [
+            { type: 'text' as const, text: JSON.stringify(envelope, null, 2) },
+            ...(sha256 ? [photoResourceLink(sha256)] : []),
+          ],
+          structuredContent: envelope,
         };
       } catch (err: unknown) {
         return renderToolError(err);
