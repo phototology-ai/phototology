@@ -13,7 +13,12 @@ export type LocalImageErrorCode =
   | 'HEIC_UNSUPPORTED'
   | 'INVALID_BASE64'
   | 'GLOB_TOO_LARGE'
-  | 'SYMLINK_REJECTED';
+  | 'SYMLINK_REJECTED'
+  | 'OUTPUT_EXISTS'
+  | 'OUTPUT_IS_INPUT'
+  | 'OUTPUT_IS_SYMLINK'
+  | 'INVALID_OUTPUT_PATH'
+  | 'PATH_OUTSIDE_ALLOWED_DIRS';
 
 export class LocalImageError extends Error {
   code: LocalImageErrorCode;
@@ -64,6 +69,267 @@ export function resolvePath(input: string): string {
     );
   }
   return input;
+}
+
+/**
+ * An absolute path exactly as given. Never normalize it with path.resolve or path.normalize
+ * before asking the kernel: those collapse `link/..` lexically, while the kernel goes through
+ * the link's target first, so the two can name different folders.
+ */
+function asGiven(p: string): string {
+  return path.isAbsolute(p) ? p : path.resolve(p);
+}
+
+/**
+ * Where a path sits without following its last component and without needing it to exist: the
+ * real path of the nearest existing ancestor folder (resolved by the kernel, `..` included)
+ * joined with the rest. Used for the allow-list check, so a path outside the folders is refused
+ * the same way whether or not it exists, and nothing about the disk outside the folders leaks
+ * through a different error code. The rest starts with a component that does not exist, so the
+ * kernel could never open it; joining it lexically only picks which refusal to give.
+ */
+function canonicalLocation(p: string): string {
+  const raw = asGiven(p);
+  const rest: string[] = [path.basename(raw)];
+  let dir = path.dirname(raw);
+  for (;;) {
+    try {
+      return path.join(fs.realpathSync.native(dir), ...rest);
+    } catch {
+      const parent = path.dirname(dir);
+      if (parent === dir) return path.resolve(raw);
+      rest.unshift(path.basename(dir));
+      dir = parent;
+    }
+  }
+}
+
+/**
+ * The real path of an existing path, else its canonicalLocation. Never throws. A dangling
+ * symlink resolves through its directory only, so it is compared as itself.
+ */
+function canonicalTarget(p: string): string {
+  try {
+    return fs.realpathSync.native(p);
+  } catch {
+    return canonicalLocation(p);
+  }
+}
+
+/** True when both paths name the same file: same real path, or (for hard links) same device and inode. */
+function isSameFile(a: string, b: string): boolean {
+  if (canonicalTarget(a) === canonicalTarget(b)) return true;
+  try {
+    const sa = fs.statSync(a);
+    const sb = fs.statSync(b);
+    return sa.dev === sb.dev && sa.ino === sb.ino;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Guard for tools that write a file (enrich_photo's outputPath). Runs before any credits are
+ * spent, and returns the canonical path: the kernel's real path of the folder as given (so
+ * `link/..` goes through the link's target, as the open would) joined with the file name.
+ * Callers write to that canonical path, never to the string they were given. In this order:
+ * 0. Under an allow-list, refuse any `..` segment (PATH_OUTSIDE_ALLOWED_DIRS), before any
+ *    filesystem call; see assertNoParentSegments.
+ * 1. Refuse a file name that is empty, `.` or `..`, or a path ending in a separator
+ *    (INVALID_OUTPUT_PATH): none of them names a new file in a known folder.
+ * 2. When the folder does not exist, refuse PATH_OUTSIDE_ALLOWED_DIRS if where it would be is
+ *    outside the allowed folders, else FILE_NOT_FOUND, so a missing folder outside the list
+ *    gets the same answer as an existing one.
+ * 3. Refuse a canonical path outside PHOTOTOLOGY_MCP_ALLOWED_DIRS (when set).
+ * 4. Refuse writing over the input file, compared by real path and inode, so a symlink, a
+ *    symlinked directory or a hard link pointing at the input is caught. Ignores overwrite.
+ * 5. Refuse a canonical path that is itself a symlink, dangling or not. Ignores overwrite: a
+ *    link is never written through, since its target can sit outside every allowed folder.
+ * 6. Refuse an existing output unless the caller passed overwrite.
+ */
+export function assertWritableOutput(inputPath: string | undefined, outputPath: string, overwrite: boolean): string {
+  assertNoParentSegments(outputPath);
+  const raw = asGiven(outputPath);
+  const name = path.basename(raw);
+  if (name === '' || name === '.' || name === '..' || /[\\/]$/.test(outputPath)) {
+    throw new LocalImageError(
+      'INVALID_OUTPUT_PATH',
+      `outputPath ${outputPath} does not end in a file name. Pass the full path of the new file, for example /folder/photo-enriched.jpg.`,
+      { path: outputPath },
+    );
+  }
+  const dir = path.dirname(raw);
+  let realDir: string;
+  try {
+    realDir = fs.realpathSync.native(dir);
+  } catch {
+    assertInsideAllowedDirs(canonicalLocation(raw), outputPath);
+    throw new LocalImageError('FILE_NOT_FOUND', `outputPath directory does not exist: ${dir}`, { path: dir });
+  }
+  const canonical = path.join(realDir, name);
+  assertInsideAllowedDirs(canonical, outputPath);
+  if (inputPath !== undefined && isSameFile(inputPath, canonical)) {
+    throw new LocalImageError(
+      'OUTPUT_IS_INPUT',
+      `outputPath ${outputPath} is the input file. enrich_photo never writes over the original; choose a different outputPath.`,
+      { path: outputPath },
+    );
+  }
+  let existing: fs.Stats | undefined;
+  try {
+    existing = fs.lstatSync(canonical);
+  } catch {
+    existing = undefined;
+  }
+  if (existing?.isSymbolicLink()) throw outputIsSymlink(outputPath);
+  if (existing && !overwrite) {
+    throw new LocalImageError(
+      'OUTPUT_EXISTS',
+      `outputPath ${outputPath} already exists. Choose a new path, or pass overwrite: true to replace it.`,
+      { path: outputPath },
+    );
+  }
+  return canonical;
+}
+
+function outputIsSymlink(outputPath: string): LocalImageError {
+  return new LocalImageError(
+    'OUTPUT_IS_SYMLINK',
+    `outputPath ${outputPath} is a symbolic link. enrich_photo never writes through a link, even with overwrite: true; pass a regular file path.`,
+    { path: outputPath },
+  );
+}
+
+/**
+ * Write enrich_photo's output. O_EXCL (unless overwrite) refuses a file that appeared during the
+ * enrich call, and O_NOFOLLOW refuses a symlink planted at outputPath after assertWritableOutput
+ * ran, so both races are closed at the open syscall rather than by the earlier pre-check.
+ */
+export function writeOutputFile(outputPath: string, bytes: Buffer, overwrite: boolean): void {
+  const { O_WRONLY, O_CREAT, O_TRUNC, O_EXCL, O_NOFOLLOW } = fs.constants;
+  let fd: number;
+  try {
+    fd = fs.openSync(outputPath, O_WRONLY | O_CREAT | (overwrite ? O_TRUNC : O_EXCL) | O_NOFOLLOW, 0o644);
+  } catch (err: unknown) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'EEXIST') {
+      throw new LocalImageError(
+        'OUTPUT_EXISTS',
+        `outputPath ${outputPath} was created by something else while enriching, so it was left untouched. ` +
+          'This call was already charged. Choose a new path, or pass overwrite: true to replace it.',
+        { path: outputPath },
+      );
+    }
+    if (code === 'ELOOP' || code === 'EMLINK') throw outputIsSymlink(outputPath);
+    throw err;
+  }
+  try {
+    let written = 0;
+    while (written < bytes.length) {
+      written += fs.writeSync(fd, bytes, written, bytes.length - written);
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+const ALLOWED_DIRS_ENV = 'PHOTOTOLOGY_MCP_ALLOWED_DIRS';
+
+/**
+ * The real path of a file and whether reaching it went through a symlink anywhere along the way
+ * (a symlinked parent folder, or macOS's /var -> /private/var). The real path uses the native
+ * resolver so case on a case-insensitive disk matches the allow-list entries; viaSymlink is
+ * confirmed with the JS resolver, which keeps the caller's case, so a mere case difference is
+ * not reported as a symlink.
+ */
+export function resolveReal(absolutePath: string): { resolved: string; viaSymlink: boolean } {
+  // The kernel resolves the path as given (`link/..` through the link); the lexical form is only
+  // the baseline that tells whether a link was involved.
+  const raw = asGiven(absolutePath);
+  const normalized = path.resolve(raw);
+  // Both calls map errors the same way, so a file removed between them is FILE_NOT_FOUND, not a raw ENOENT.
+  const realpath = (resolver: (p: string) => string): string => {
+    try {
+      return resolver(raw);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT' || code === 'ENOTDIR') {
+        throw new LocalImageError('FILE_NOT_FOUND', `File not found: ${absolutePath}`, { path: absolutePath });
+      }
+      if (code === 'EACCES' || code === 'EPERM') {
+        throw new LocalImageError('PERMISSION_DENIED', `Permission denied reading: ${absolutePath}`, { path: absolutePath });
+      }
+      throw new LocalImageError('FILE_NOT_FOUND', `Could not resolve ${absolutePath}: ${(err as Error).message}`, { path: absolutePath });
+    }
+  };
+  const resolved = realpath(fs.realpathSync.native);
+  const viaSymlink = resolved !== normalized && realpath(fs.realpathSync) !== normalized;
+  return { resolved, viaSymlink };
+}
+
+/**
+ * The folders named by PHOTOTOLOGY_MCP_ALLOWED_DIRS, each resolved to its real path, or null when
+ * the variable is unset or blank (no allow-list). Relative and empty entries are ignored; an entry
+ * that does not exist is kept as written, so it matches nothing rather than failing the server. A
+ * variable whose entries are all unusable yields an empty list, which refuses every path: a typo
+ * must never quietly widen access to the whole disk.
+ */
+function allowedDirs(): string[] | null {
+  const raw = process.env[ALLOWED_DIRS_ENV];
+  if (raw === undefined || raw.trim() === '') return null;
+  const dirs: string[] = [];
+  for (const entry of raw.split(path.delimiter)) {
+    const trimmed = entry.trim();
+    if (trimmed === '' || !path.isAbsolute(trimmed)) continue;
+    try {
+      dirs.push(fs.realpathSync.native(trimmed));
+    } catch {
+      dirs.push(path.resolve(trimmed));
+    }
+  }
+  return dirs;
+}
+
+/**
+ * Refuse a real path outside every PHOTOTOLOGY_MCP_ALLOWED_DIRS folder. The error names
+ * asGivenPath (the caller's own string), never the real path. The boundary is a whole
+ * path component, so an allowed /a never admits /a2. Call with a path from resolveReal, so a
+ * symlink inside an allowed folder that points elsewhere is judged by where it lands.
+ */
+function isInside(resolved: string, dirs: string[]): boolean {
+  return dirs.some((dir) => {
+    const prefix = dir.endsWith(path.sep) ? dir : dir + path.sep;
+    return resolved === dir || resolved.startsWith(prefix);
+  });
+}
+
+export function assertInsideAllowedDirs(resolved: string, asGivenPath: string = resolved): void {
+  const dirs = allowedDirs();
+  if (dirs === null || isInside(resolved, dirs)) return;
+  // Name the path as the caller gave it, never `resolved`: that would reveal where an outside link points.
+  throw new LocalImageError(
+    'PATH_OUTSIDE_ALLOWED_DIRS',
+    `${asGivenPath} is outside the folders this server may read or write (${ALLOWED_DIRS_ENV}: ${dirs.length > 0 ? dirs.join(path.delimiter) : 'no usable absolute folder'}). ` +
+      'Use a path inside one of those folders, or ask the user to add the folder to the list.',
+    { path: asGivenPath },
+  );
+}
+
+/**
+ * Under an allow-list, refuse any path or pattern with a `..` segment (either separator) before
+ * any filesystem call. Whether `X/..` resolves depends on whether X exists, so a `..` through an
+ * outside folder would answer differently for an existing and a missing folder, telling the
+ * caller what exists outside the list. Without an allow-list, `..` works as usual.
+ */
+function assertNoParentSegments(asGivenPath: string): void {
+  const dirs = allowedDirs();
+  if (dirs === null || !asGivenPath.split(/[\\/]/).includes('..')) return;
+  throw new LocalImageError(
+    'PATH_OUTSIDE_ALLOWED_DIRS',
+    `${asGivenPath} contains "..", which is not accepted while ${ALLOWED_DIRS_ENV} is set. ` +
+      'Pass the direct path inside one of the allowed folders.',
+    { path: asGivenPath },
+  );
 }
 
 /** Per-image raw size cap. 10MB raw → ~13.4MB base64, safely under API 50MB body limit. */
@@ -131,10 +397,22 @@ function detectFormat(bytes: Buffer): 'jpeg' | 'png' | 'gif' | 'webp' | 'heic' |
   return null;
 }
 
-export function readImage(absolutePath: string): Buffer {
+/**
+ * Read a local image after resolving its real path and checking it against
+ * PHOTOTOLOGY_MCP_ALLOWED_DIRS. Returns the bytes plus where they really came from, so a tool can
+ * tell the caller when a symlinked folder led somewhere else.
+ */
+export function readLocalImage(absolutePath: string): { bytes: Buffer; resolvedPath: string; viaSymlink: boolean } {
+  assertNoParentSegments(absolutePath);
+  // Allow-list first, so a path outside the folders is refused the same way whether it exists or not.
+  assertInsideAllowedDirs(canonicalTarget(absolutePath), absolutePath);
+  const { resolved, viaSymlink } = resolveReal(absolutePath);
+  // Again on the path actually read, in case a link changed between the two resolutions.
+  assertInsideAllowedDirs(resolved, absolutePath);
+
   let stat: fs.Stats;
   try {
-    // lstat (not stat) so we detect symlinks before following them
+    // lstat (not stat) on the path as given, so a symlinked file itself is still refused
     stat = fs.lstatSync(absolutePath);
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
@@ -165,7 +443,8 @@ export function readImage(absolutePath: string): Buffer {
 
   let bytes: Buffer;
   try {
-    bytes = fs.readFileSync(absolutePath);
+    // Read the checked real path, so a parent link swapped after the check cannot redirect the read.
+    bytes = fs.readFileSync(resolved);
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === 'EACCES' || code === 'EPERM') {
@@ -185,7 +464,11 @@ export function readImage(absolutePath: string): Buffer {
   }
   assertNotHeic(format, absolutePath);
 
-  return bytes;
+  return { bytes, resolvedPath: resolved, viaSymlink };
+}
+
+export function readImage(absolutePath: string): Buffer {
+  return readLocalImage(absolutePath).bytes;
 }
 
 /**
@@ -244,9 +527,32 @@ export function validateBase64(input: string): void {
 const MAX_GLOB_FILES = 200;
 
 /**
+ * The folder part of a glob before its first wildcard segment, as given: the caller resolves it
+ * with the kernel, which applies `..` after following any link before it.
+ */
+function globBase(pattern: string): string {
+  const segments = pattern.split(/[\\/]/);
+  const fixed: string[] = [];
+  for (const seg of segments) {
+    if (seg !== '' && fg.isDynamicPattern(seg)) break;
+    fixed.push(seg);
+  }
+  return fixed.join(path.sep) || path.sep;
+}
+
+/**
  * Expand a list of literal paths and glob patterns into a deduplicated
  * absolute-path array. Each pattern is expanded independently; results
- * are merged + deduplicated. ~/ is expanded BEFORE passing to fast-glob.
+ * are merged + deduplicated. Every pattern must be absolute or ~/-prefixed
+ * (RELATIVE_PATH_REJECTED otherwise); ~/ is expanded BEFORE fast-glob sees it.
+ *
+ * When PHOTOTOLOGY_MCP_ALLOWED_DIRS is set, a glob whose fixed folder part
+ * (before the first wildcard) is outside every allowed folder is refused
+ * whole with PATH_OUTSIDE_ALLOWED_DIRS naming only the pattern, and so is any
+ * pattern or literal path with a `..` segment: thrown, or
+ * passed to onRefusedPattern so the other patterns still expand. A match
+ * that really lives outside the folders is dropped silently. Literal paths
+ * pass through; readLocalImage judges them.
  *
  * Hard cap at MAX_GLOB_FILES across all patterns combined. Empty glob
  * matches return an empty result (not an error) so a typo'd glob doesn't
@@ -257,27 +563,58 @@ const MAX_GLOB_FILES = 200;
  *   - suppressErrors: true (per-file permission-denied → skipped, not fatal)
  *   - followSymbolicLinks: false (symlinks excluded; readImage rejects them anyway)
  */
-export function expandGlobs(patterns: string[]): string[] {
+export function expandGlobs(
+  patterns: string[],
+  onRefusedPattern?: (pattern: string, err: LocalImageError) => void,
+): string[] {
   const seen = new Set<string>();
+  const dirs = allowedDirs();
   for (const raw of patterns) {
     if (!raw) continue;
-    // Expand ~/ in each pattern before fast-glob sees it
-    const expanded = raw.startsWith(HOME_PREFIX)
-      ? path.join(os.homedir(), raw.slice(HOME_PREFIX.length))
-      : raw;
+    // Same absolute-or-~/ rule for literals and globs: resolvePath expands ~/
+    // and refuses a relative pattern, which would otherwise expand from the
+    // server's working directory (it varies by host).
+    const expanded = resolvePath(raw);
+    try {
+      assertNoParentSegments(expanded);
+    } catch (err) {
+      if (onRefusedPattern === undefined || !(err instanceof LocalImageError)) throw err;
+      onRefusedPattern(raw, err);
+      continue;
+    }
     // Detect glob meta-chars (heuristic — fast-glob will also treat literal paths as patterns)
     const isGlob = /[*?[\]{}!]/.test(expanded);
     if (isGlob) {
+      if (dirs !== null) {
+        // Refuse the whole pattern when its fixed base folder sits outside the allow-list, before
+        // anything is listed, so the error names only the pattern and never a file found there.
+        const base = canonicalTarget(globBase(expanded));
+        if (!isInside(base, dirs)) {
+          const err = new LocalImageError(
+            'PATH_OUTSIDE_ALLOWED_DIRS',
+            `The pattern ${raw} searches outside the folders this server may read (${ALLOWED_DIRS_ENV}). ` +
+              'Use a pattern whose fixed folder part is inside one of those folders, or ask the user to add the folder to the list.',
+            { path: raw },
+          );
+          if (onRefusedPattern === undefined) throw err;
+          onRefusedPattern(raw, err);
+          continue;
+        }
+      }
       const matches = fg.sync(expanded, {
         onlyFiles: true,
         suppressErrors: true,
         followSymbolicLinks: false,
         absolute: true,
       });
-      for (const m of matches) seen.add(m);
+      for (const m of matches) {
+        // A match that really lives outside the folders (a link, a `..` after a wildcard) is
+        // dropped without a word: reporting it would name a file outside the list.
+        if (dirs !== null && !isInside(canonicalTarget(m), dirs)) continue;
+        seen.add(m);
+      }
     } else {
-      // Literal path. Resolve via resolvePath to enforce absolute-or-~/ rules.
-      seen.add(resolvePath(expanded));
+      seen.add(expanded);
     }
     if (seen.size > MAX_GLOB_FILES) {
       throw new LocalImageError(

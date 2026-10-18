@@ -67,6 +67,24 @@ describe('registerTools', () => {
     ]);
   });
 
+  it('gives every tool its exact human-readable title', () => {
+    const toolSpy = jest.spyOn(server, 'registerTool');
+    registerTools(server, 'pt_test_abc123');
+
+    const titles = Object.fromEntries(
+      toolSpy.mock.calls.map((c) => [c[0], (c[1] as { title?: unknown }).title]),
+    );
+    expect(titles).toEqual({
+      analyze_photo: 'Analyze a photo',
+      analyze_batch: 'Analyze a batch of photos',
+      list_lenses: 'List lenses and stacks',
+      lookup_photo: 'Look up a photo in the registry',
+      get_credits: 'Check credit balance',
+      purchase_credits: 'Buy credits',
+      enrich_photo: 'Write analysis into a copy of the photo',
+    });
+  });
+
   it('returns the single client the tools use, so resources share it', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { PhototologyClient } = require('@phototology/sdk');

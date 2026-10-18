@@ -201,6 +201,51 @@ describe('lookup_photo input validation', () => {
   });
 });
 
+describe('lookup_photo reports resolvedPath only for a path reached through a symlink', () => {
+  let base: string;
+
+  beforeAll(() => {
+    base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-lookup-photo-link-')));
+    fs.mkdirSync(path.join(base, 'real'));
+    fs.writeFileSync(path.join(base, 'real', 'p.jpg'), JPEG_BYTES);
+    fs.symlinkSync(path.join(base, 'real'), path.join(base, 'linked'));
+  });
+
+  afterAll(() => {
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+
+  function exactHit(): jest.Mock {
+    return jest.fn().mockResolvedValue({
+      results: { [SHA256_OF_JPEG_BYTES]: { matchType: 'exact', photo: { sha256: SHA256_OF_JPEG_BYTES } } },
+    });
+  }
+
+  it('adds resolvedPath when a parent folder is a symlink', async () => {
+    const handler = captureHandler(makeMockClient(exactHit()));
+    const result = await handler({ imagePath: path.join(base, 'linked', 'p.jpg') });
+    expect(result.isError).toBeFalsy();
+    const payload = JSON.parse(result.content[0].text);
+    expect(payload.resolvedPath).toBe(path.join(base, 'real', 'p.jpg'));
+    expect(payload.matchType).toBe('exact');
+  });
+
+  it('adds resolvedPath on the pHash fall-through too', async () => {
+    const lookup = jest.fn()
+      .mockResolvedValueOnce({ results: {} })
+      .mockResolvedValueOnce({ results: { x: { matchType: 'none' } } });
+    const handler = captureHandler(makeMockClient(lookup));
+    const result = await handler({ imagePath: path.join(base, 'linked', 'p.jpg') });
+    expect(JSON.parse(result.content[0].text).resolvedPath).toBe(path.join(base, 'real', 'p.jpg'));
+  });
+
+  it('omits resolvedPath for a plain path', async () => {
+    const handler = captureHandler(makeMockClient(exactHit()));
+    const result = await handler({ imagePath: path.join(base, 'real', 'p.jpg') });
+    expect(JSON.parse(result.content[0].text).resolvedPath).toBeUndefined();
+  });
+});
+
 describe('lookup_photo typed result', () => {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { LookupPhotoOutputSchema } = require('../src/schemas');

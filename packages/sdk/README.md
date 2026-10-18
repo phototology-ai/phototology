@@ -202,7 +202,7 @@ const { modules, presets } = await client.modules();
 
 ### `client.usage()`
 
-Read the authenticated key's credit balance. Free, no credits charged. Call this before a batch of analyze calls to warn the user, pick a cheaper subset of lenses, or surface a purchase link before hitting the out-of-credits error.
+Read the credit balance of the account your API key belongs to. Free, no credits charged. Call this before a batch of analyze calls to warn the user, pick a cheaper subset of lenses, or surface a purchase link before hitting the out-of-credits error.
 
 ```typescript
 const usage = await client.usage();

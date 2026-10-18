@@ -11,11 +11,11 @@ First coordinated 1.2.0 cut with `@phototology/mcp`. Adds the `enrich()` method,
 
 ### Added
 
-- **`client.enrich(request): Promise<EnrichResponse>`** — POST `/v2/enrich`. Writes a photo's already-cached lens output into its EXIF/IPTC/XMP metadata and returns the enriched bytes (base64), so the intelligence travels with the file. Costs 5 credits per call and bills regardless of cache state. Requires a prior `analyze()` on the same photo, otherwise throws `ValidationError` with code `PHOTO_NOT_IN_REGISTRY`. `formats: ['c2pa']` is rejected (C2PA signing is deferred). New exported types: `EnrichRequest`, `EnrichResponse`.
+- **`client.enrich(request): Promise<EnrichResponse>`**: POST `/v2/enrich`. Writes a photo's already-cached lens output into its EXIF/IPTC/XMP metadata and returns the enriched bytes (base64), so the intelligence travels with the file. Costs 5 credits per call and bills regardless of cache state. Requires a prior `analyze()` on the same photo, otherwise throws `ValidationError` with code `PHOTO_NOT_IN_REGISTRY`. `formats: ['c2pa']` is rejected (C2PA signing is deferred). New exported types: `EnrichRequest`, `EnrichResponse`.
 - **Top-level `livemode: boolean` on every analyze response** (`AnalyzeResponseBase`). `true` for a `pt_live_` key (real model run); `false` for a `pt_test_` sandbox key (deterministic golden-fixture data, no provider call, 0 credits). Branch on `livemode`, not on `meta.provider`. `/v2/lookup` and `/v2/enrich` intentionally omit `livemode` (no sandbox duality).
-- **`UsageResponse.total: number`** — the spendable credit balance, the single number to show. `community` and `purchased` remain for internal refund-to-origin accounting; they are not two balances the holder manages.
+- **`UsageResponse.total: number`**: the spendable credit balance, the single number to show. `community` and `purchased` remain for internal refund-to-origin accounting; they are not two balances the holder manages.
 - **`ErrorCredits.total: number`** on 402 `PLAN_LIMIT_EXCEEDED` credit payloads. The 402 message now leads with `total` instead of the old `(community: X, purchased: Y)` parenthetical.
-- **`LookupResult.computedHashes?: { sha256, pHash, dHash }`** — present when the lookup supplied image bytes (POST `/v2/lookup`); absent on the GET hash fast-path. Strictly additive. (Carried over from the never-published 1.1.3 intermediate; see Versioning note.)
+- **`LookupResult.computedHashes?: { sha256, pHash, dHash }`**: present when the lookup supplied image bytes (POST `/v2/lookup`); absent on the GET hash fast-path. Strictly additive. (Carried over from the never-published 1.1.3 intermediate; see Versioning note.)
 - **`ModuleInfo` discovery fields:** `billable: boolean`, `defaultColumns: LensColumn[]`, and `internal?: true`, plus a new exported `LensColumn` type. Drives runtime discovery and the photo-to-spreadsheet projection. Mirrors the new `/v1/modules` response shape.
 
 ### Changed
@@ -40,7 +40,7 @@ First coordinated 1.2.0 cut with `@phototology/mcp`. Adds the `enrich()` method,
 
 ### Security
 
-- **Scaffolder writes `.env` with `mode: 0o600`** (`src/init.ts:scaffold`). The file contains `PHOTOTOLOGY_API_KEY=pt_live_...`. Pre-fix permissions defaulted to the user's umask (typically `0o644` — world-readable). On shared dev machines or cloud IDEs (Codespaces, Gitpod), the key was readable by any other user on the box. Closes Audit #5 HIGH (2026-05-19).
+- **Scaffolder writes `.env` with `mode: 0o600`** (`src/init.ts:scaffold`). The file contains `PHOTOTOLOGY_API_KEY=pt_live_...`. Pre-fix permissions defaulted to the user's umask (typically `0o644`, world-readable). On shared dev machines or cloud IDEs (Codespaces, Gitpod), the key was readable by any other user on the box. Closes Audit #5 HIGH (2026-05-19).
 
 ### Fixed
 
@@ -52,7 +52,7 @@ First coordinated 1.2.0 cut with `@phototology/mcp`. Adds the `enrich()` method,
 - **npm `keywords` extended** with the differentiating terms (`registry`, `photo-registry`, `perceptual-hash`, `visual-memory`, `cache-hits`, `delta-billing`, `analyze-once`, `exif-metadata`) so npm search + LLM-readable surfaces surface the actual moat. Closes Audit #1 EC2 + Audit #2 AM-H2 (2026-05-19).
 - **Copy-consistency cleanup.**
   - README hero rewritten: dropped the "harness for visual intelligence" framing and the secondary "Analyze once. Remember forever." line in favor of the canonical tagline ("Persistent memory for visual intelligence.") + the package's specific role.
-  - README pricing section: dropped the stale "1,000 community credits every month, free, no card required" claim. Replaced with the pricing v1 signup-grant wording (5,000 free credits at signup — 1,000 for verifying email + 4,000 for adding a card-on-file — one-time, not recurring).
+  - README pricing section: dropped the stale "1,000 community credits every month, free, no card required" claim. Replaced with the pricing v1 signup-grant wording (5,000 free credits at signup: 1,000 for verifying email + 4,000 for adding a card-on-file; one-time, not recurring).
   - README `client.usage()` field commentary updated to flag `monthlyAllowance` and `resetsInDays` as legacy fields that report 0 once the pricing v1 cutoff has bound the account.
   - `UsageResponse` JSDoc on `monthlyAllowance` / `resetsInDays` / `tier` rewritten to drop the "refills monthly" / "drives the monthly allowance" framing. The fields ship in the `.d.ts` to consumers, so the language now reflects post-cutoff reality.
   - `CreditExhaustedErrorOptions.communityBalance` JSDoc dropped the "(monthly-reset)" parenthetical.
@@ -72,7 +72,7 @@ Metadata-only patch. No code or API changes.
 
 ### Added
 
-- `client.usage()` — read the authenticated account's dual-pool credit balance (`community`, `purchased`, `reserved`, `resetsInDays`). Free, no credits billed. Used by the MCP `get_credits` tool. Strictly additive — no existing method signatures change.
+- `client.usage()`: read the calling account's dual-pool credit balance (`community`, `purchased`, `reserved`, `resetsInDays`). Free, no credits billed. Used by the MCP `get_credits` tool. Strictly additive: no existing method signatures change.
 
 ## 1.0.1 (2026-04-17)
 
@@ -87,13 +87,13 @@ Registry v2 ships. Photos are persistent per API key: the second call on the sam
 
 ### Breaking Changes
 
-- **`LookupResult.analyses[]` is gone.** Replaced by `LookupResult.photo?: PhotoRecord`. A photo is now a single record keyed by `sha256`, with `lenses: Record<string, LensIndexEntry>` — one entry per lens, updated in place on refresh. Historical runs are no longer returned. See the README migration section for before/after code.
+- **`LookupResult.analyses[]` is gone.** Replaced by `LookupResult.photo?: PhotoRecord`. A photo is now a single record keyed by `sha256`, with `lenses: Record<string, LensIndexEntry>`, one entry per lens, updated in place on refresh. Historical runs are no longer returned. See the README migration section for before/after code.
 - `AnalysisRecord` type removed. Use `LensIndexEntry` (per-lens) and `PhotoRecord` (per-photo) instead.
 
 ### Added
 
-- `AnalyzeRequest.refresh?: boolean` — pass `true` to bypass the projection cache and force a fresh LLM run for every requested lens. Billed normally.
-- `AnalyzeUsage.creditsCharged?: number` — credits billed on this specific call. Zero on a full registry cache hit.
+- `AnalyzeRequest.refresh?: boolean`: pass `true` to bypass the projection cache and force a fresh LLM run for every requested lens. Billed normally.
+- `AnalyzeUsage.creditsCharged?: number`: credits billed on this specific call. Zero on a full registry cache hit.
 - New exported types: `PhotoRecord`, `LensIndexEntry`, `LookupResponse`, `LookupResult`, `LookupRequest`.
 - Vocabulary aligned with the Phototology brand rename: "lenses" everywhere (was "modules").
 

@@ -1,13 +1,13 @@
 {
-  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
-  "name": "io.github.phototology-ai/phototology",
-  "description": "Persistent memory for visual intelligence. Analyze photos with composable lenses, look up cached results for free, and enrich files with EXIF/IPTC/XMP metadata. Analyze once. Remember forever.",
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "com.phototology/mcp",
+  "description": "Persistent memory for visual intelligence. A photo registry: analyze once, look up free after that.",
   "version": "1.3.0",
   "websiteUrl": "https://phototology.com",
   "repository": {
     "url": "https://github.com/phototology-ai/phototology",
     "source": "github",
-    "subfolder": "packages/phototology-mcp"
+    "subfolder": "packages/mcp"
   },
   "packages": [
     {
@@ -32,7 +32,17 @@
         },
         {
           "name": "PHOTOTOLOGY_MCP_NO_TELEMETRY",
-          "description": "Set to 1 to disable the anonymous client-discovery ping (editor name/version + package version only; never image content, paths, tool inputs/outputs, or the API key).",
+          "description": "Set to 1 to disable anonymous telemetry: the editor name and version, the package version, and per tool call the tool name, success, duration, error code and counts. Never image content, file paths, tool inputs or outputs, or conversation text.",
+          "isRequired": false
+        },
+        {
+          "name": "DO_NOT_TRACK",
+          "description": "Set to 1 to disable telemetry. Same effect as PHOTOTOLOGY_MCP_NO_TELEMETRY; follows the cross-tool convention many CLIs honor.",
+          "isRequired": false
+        },
+        {
+          "name": "PHOTOTOLOGY_MCP_ALLOWED_DIRS",
+          "description": "Folders the server may read photos from and write enriched copies to, separated by : (; on Windows). Unset means any local path. Paths are checked after symlinks are resolved.",
           "isRequired": false
         }
       ]

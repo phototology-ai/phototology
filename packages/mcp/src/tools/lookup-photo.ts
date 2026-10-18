@@ -3,7 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { PhototologyClient, LookupResponse } from '@phototology/sdk';
 import { renderToolError } from './errors';
 import {
-  readImage,
+  readLocalImage,
   resolvePath,
   computeSha256,
   validateBase64,
@@ -27,9 +27,13 @@ const LookupInputSchema = {
     .describe('Hamming-distance threshold for pHash fuzzy matching (0-64). Default 5. Lower = stricter; higher = more matches but less precise.'),
 };
 
-/** The tool result: the flattened envelope as text and structured content, plus a resource link on a match. */
-function lookupResult(res: LookupResponse, knownSha256?: string) {
-  const { envelope, sha256 } = toLookupEnvelope(res, knownSha256);
+/**
+ * The tool result: the flattened envelope as text and structured content, plus a resource link on a match.
+ * `resolvedPath` is set only when a symlinked folder led somewhere else, so the caller sees what was read.
+ */
+function lookupResult(res: LookupResponse, knownSha256?: string, resolvedPath?: string) {
+  const { envelope: base, sha256 } = toLookupEnvelope(res, knownSha256);
+  const envelope = resolvedPath ? { ...base, resolvedPath } : base;
   return {
     content: [
       { type: 'text' as const, text: JSON.stringify(envelope, null, 2) },
@@ -55,6 +59,7 @@ export function registerLookupPhoto(server: McpServer, client: PhototologyClient
   s.registerTool(
     'lookup_photo',
     {
+      title: 'Look up a photo in the registry',
       description: [
         'Check if a photo has already been analyzed and return every cached lens result. Free. Does not bill credits.',
         '',
@@ -120,9 +125,12 @@ export function registerLookupPhoto(server: McpServer, client: PhototologyClient
         // Local input modes (imagePath or imageBase64): sha256→pHash cascade.
         let bytes: Buffer;
         let cachedBase64: string | undefined;
+        // Set only when a symlinked folder led somewhere else, so the caller sees what was read.
+        let resolvedPath: string | undefined;
         if (imagePath !== undefined && imagePath !== '') {
-          const abs = resolvePath(imagePath);
-          bytes = readImage(abs);
+          const local = readLocalImage(resolvePath(imagePath));
+          bytes = local.bytes;
+          if (local.viaSymlink) resolvedPath = local.resolvedPath;
         } else {
           // imageBase64 (validated already-non-empty by the provided-count check).
           validateBase64(imageBase64!);
@@ -142,7 +150,7 @@ export function registerLookupPhoto(server: McpServer, client: PhototologyClient
         // matchType 'exact' (sha256 match) OR rarely 'fuzzy' (pHash collision with
         // near-zero phash). Either means Step 2 has nothing left to add.
         if (exactEntry && exactEntry.matchType !== 'none') {
-          return lookupResult(exact, sha);
+          return lookupResult(exact, sha, resolvedPath);
         }
 
         // Step 2: send image bytes so the server can compute pHash and check
@@ -152,7 +160,7 @@ export function registerLookupPhoto(server: McpServer, client: PhototologyClient
           imagesBase64: [b64],
           ...(threshold !== undefined ? { threshold } : {}),
         });
-        return lookupResult(fuzzy, sha);
+        return lookupResult(fuzzy, sha, resolvedPath);
       } catch (err: unknown) {
         return renderToolError(err);
       }

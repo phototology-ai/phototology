@@ -11,7 +11,8 @@
  * Privacy posture: no third-party SDK is bundled. The only outbound
  * connection is to `api.phototology.com` — a domain the user's MCP is
  * already trusting for every analyze + lookup call. The user's API key is
- * the only credential involved. Opt out with `PHOTOTOLOGY_MCP_NO_TELEMETRY=1`.
+ * the only credential involved. Opt out with `PHOTOTOLOGY_MCP_NO_TELEMETRY=1`
+ * or the cross-tool `DO_NOT_TRACK=1`.
  *
  * Errors are swallowed completely. Telemetry must never crash the MCP
  * server, block stdio, or surface anything to the agent.
@@ -52,13 +53,27 @@ export interface PhoneHomeOptions {
   baseUrl?: string;
 }
 
-function shouldSkip(): boolean {
-  // Opt-out: explicit env var disables all phone-home traffic. Honor either
-  // truthy form (`1`, `true`, etc.) so users don't have to guess the spelling.
-  const raw = process.env.PHOTOTOLOGY_MCP_NO_TELEMETRY;
+// Honor any common truthy spelling (`1`, `true`, `yes`, `on`, any case) so
+// users don't have to guess.
+function isTruthyEnv(raw: string | undefined): boolean {
   if (!raw) return false;
   const v = raw.toLowerCase();
   return v === '1' || v === 'true' || v === 'yes' || v === 'on';
+}
+
+function shouldSkip(): boolean {
+  // Opt-out: explicit env var disables all phone-home traffic.
+  if (isTruthyEnv(process.env.PHOTOTOLOGY_MCP_NO_TELEMETRY)) return true;
+  // Cross-tool convention (consoledonottrack.com): one variable silences
+  // telemetry in every CLI that honors it.
+  if (isTruthyEnv(process.env.DO_NOT_TRACK)) return true;
+  // Test runs never phone home: a jest suite once sent hundreds of events to
+  // production. Tests that assert on the request opt back in with
+  // PHOTOTOLOGY_MCP_TELEMETRY_IN_TESTS (and mock fetch).
+  if (process.env.NODE_ENV === 'test') {
+    return !isTruthyEnv(process.env.PHOTOTOLOGY_MCP_TELEMETRY_IN_TESTS);
+  }
+  return false;
 }
 
 /**

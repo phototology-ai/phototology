@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { type PhototologyClient, type LookupResult, LENS_FIELDS, PRESET_IDS, type LensId } from '@phototology/sdk';
 import { renderToolError } from './errors';
-import { readImage, expandGlobs, validateBase64, LocalImageError, assertNotHeic, detectBase64Format } from '../lib/local-image';
+import { readLocalImage, expandGlobs, validateBase64, LocalImageError, assertNotHeic, detectBase64Format } from '../lib/local-image';
 import {
   toAnalyzeEnvelope, photoResourceLink, photoResourceUri, usdFromCredits, billableLenses, outputLenses, analyzedPhotoSha256,
 } from '../lib/envelope';
@@ -70,7 +70,7 @@ interface BatchArgs {
  */
 type PhotoInput =
   | { kind: 'url'; value: string; label: string }
-  | { kind: 'base64'; value: string; label: string };
+  | { kind: 'base64'; value: string; label: string; resolvedPath?: string };
 
 /** One row of `results[]`: an analyze envelope, an inline error, or a dry-run row. */
 type BatchRow = AnalyzeBatchOutput['results'][number];
@@ -179,6 +179,7 @@ export function registerAnalyzeBatch(server: McpServer, client: PhototologyClien
   s.registerTool(
     'analyze_batch',
     {
+      title: 'Analyze a batch of photos',
       description: [
         `Analyze 1 to ${MAX_BATCH} INDEPENDENT photos in a single tool call. Each photo is analyzed separately and gets its own output. Use this whenever the user has 2 or more photos to process.`,
         '',
@@ -249,12 +250,20 @@ export function registerAnalyzeBatch(server: McpServer, client: PhototologyClien
 
         if (imagePaths && imagePaths.length > 0) {
           // expandGlobs throwing GLOB_TOO_LARGE is structural, not per-file:
-          // let it propagate to the outer catch.
-          const expanded = expandGlobs(imagePaths);
+          // let it propagate to the outer catch. A glob refused by the
+          // allow-list becomes one error row naming only the pattern.
+          const expanded = expandGlobs(imagePaths, (pattern, err) => {
+            preErrors.push(errorRow(pattern, err, 'READ_FAILED'));
+          });
           for (const abs of expanded) {
             try {
-              const bytes = readImage(abs);
-              inputs.push({ kind: 'base64', value: bytes.toString('base64'), label: abs });
+              const local = readLocalImage(abs);
+              inputs.push({
+                kind: 'base64',
+                value: local.bytes.toString('base64'),
+                label: abs,
+                ...(local.viaSymlink ? { resolvedPath: local.resolvedPath } : {}),
+              });
             } catch (err: unknown) {
               preErrors.push(errorRow(abs, err, 'READ_FAILED'));
             }
@@ -396,6 +405,11 @@ export function registerAnalyzeBatch(server: McpServer, client: PhototologyClien
               rows[idx] = errorRow(input.label, err, 'ANALYZE_FAILED');
             }
           });
+        }
+
+        // A path read through a symlinked folder names the real file it read.
+        for (const { input, idx } of plans) {
+          if (input.kind === 'base64' && input.resolvedPath) rows[idx] = { ...rows[idx], resolvedPath: input.resolvedPath };
         }
 
         // Pre-validation errors come first, so every submitted input is

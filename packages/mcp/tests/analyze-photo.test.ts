@@ -206,6 +206,40 @@ describe('analyze_photo input modes', () => {
   });
 });
 
+describe('analyze_photo reports resolvedPath only for a path reached through a symlink', () => {
+  const JPEG_BYTES = Buffer.from([
+    0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00,
+    0x01, 0x01, 0x00, 0x00, 0x48, 0x00, 0x48, 0x00, 0x00,
+  ]);
+  let base: string;
+
+  beforeAll(() => {
+    base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-analyze-photo-link-')));
+    fs.mkdirSync(path.join(base, 'real'));
+    fs.writeFileSync(path.join(base, 'real', 'p.jpg'), JPEG_BYTES);
+    fs.symlinkSync(path.join(base, 'real'), path.join(base, 'linked'));
+  });
+
+  afterAll(() => {
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+
+  it('adds resolvedPath when a parent folder is a symlink', async () => {
+    const handler = captureHandler(makeMockClient());
+    const result = await handler({ imagePath: path.join(base, 'linked', 'p.jpg'), stack: 'quick-scan', includeEmbedding: false });
+    expect(result.isError).toBeFalsy();
+    const payload = JSON.parse(result.content[0].text);
+    expect(payload.resolvedPath).toBe(path.join(base, 'real', 'p.jpg'));
+    expect(payload.id).toBe('ana_test123');
+  });
+
+  it('omits resolvedPath for a plain path', async () => {
+    const handler = captureHandler(makeMockClient());
+    const result = await handler({ imagePath: path.join(base, 'real', 'p.jpg'), stack: 'quick-scan', includeEmbedding: false });
+    expect(JSON.parse(result.content[0].text).resolvedPath).toBeUndefined();
+  });
+});
+
 describe('envelope helpers', () => {
   it('usdFromCredits renders two decimals at $0.01 per credit', () => {
     expect(usdFromCredits(0)).toBe('0.00');

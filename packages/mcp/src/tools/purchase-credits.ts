@@ -22,6 +22,7 @@ export function registerPurchaseCredits(server: McpServer): void {
   s.registerTool(
     'purchase_credits',
     {
+      title: 'Buy credits',
       description: [
         'Get a deep-link the user can open in their browser to buy more Phototology credits. Free. Does not bill credits.',
         '',

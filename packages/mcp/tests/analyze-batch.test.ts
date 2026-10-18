@@ -548,6 +548,39 @@ describe('analyze_batch local input modes', () => {
   });
 });
 
+describe('analyze_batch reports resolvedPath only for a path reached through a symlink', () => {
+  const JPEG_BYTES = Buffer.from([
+    0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00,
+    0x01, 0x01, 0x00, 0x00, 0x48, 0x00, 0x48, 0x00, 0x00,
+  ]);
+  let base: string;
+
+  beforeAll(() => {
+    base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-analyze-batch-link-')));
+    fs.mkdirSync(path.join(base, 'real'));
+    fs.writeFileSync(path.join(base, 'real', 'p.jpg'), JPEG_BYTES);
+    fs.symlinkSync(path.join(base, 'real'), path.join(base, 'linked'));
+  });
+
+  afterAll(() => {
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+
+  it('adds resolvedPath to the entry reached through a symlinked folder and not to the plain one', async () => {
+    mockAnalyze.mockResolvedValue(freshAnalyzeResp(1));
+    const server = new McpServer({ name: 'test', version: '0.0.1' });
+    const cb = captureToolCallback(server, 'analyze_batch');
+    const viaLink = path.join(base, 'linked', 'p.jpg');
+    const plain = path.join(base, 'real', 'p.jpg');
+    const result = await cb({ imagePaths: [viaLink, plain], lenses: ['dating'], refresh: true });
+    expect(result.isError).toBeFalsy();
+    const payload = JSON.parse(result.content[0].text);
+    const byPath = Object.fromEntries(payload.results.map((r: any) => [r.input, r]));
+    expect(byPath[viaLink].resolvedPath).toBe(plain);
+    expect(byPath[plain].resolvedPath).toBeUndefined();
+  });
+});
+
 describe('analyze_batch — selectable lens enum', () => {
   // Regression (1.2.1): vehicle-condition is in LENS_FIELDS but stack-only; the
   // API rejects it on direct selection, so it must not appear in the `lenses` enum.
@@ -561,6 +594,96 @@ describe('analyze_batch — selectable lens enum', () => {
 
     expect(lensesSchema.safeParse(['vehicle-condition']).success).toBe(false);
     expect(lensesSchema.safeParse(['dating']).success).toBe(true);
+  });
+});
+
+describe('analyze_batch globs and PHOTOTOLOGY_MCP_ALLOWED_DIRS', () => {
+  const ENV = 'PHOTOTOLOGY_MCP_ALLOWED_DIRS';
+  const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46]);
+  let base: string;
+  let savedEnv: string | undefined;
+
+  beforeEach(() => {
+    savedEnv = process.env[ENV];
+    base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-batch-allowed-')));
+    for (const d of ['allowed', 'secret']) {
+      fs.mkdirSync(path.join(base, d));
+      fs.writeFileSync(path.join(base, d, 'one.jpg'), JPEG);
+      fs.writeFileSync(path.join(base, d, 'two.jpg'), JPEG);
+    }
+    // A link inside the allowed folder whose target is outside it.
+    fs.symlinkSync(path.join(base, 'secret', 'one.jpg'), path.join(base, 'allowed', 'escape.jpg'));
+    process.env[ENV] = path.join(base, 'allowed');
+  });
+
+  afterEach(() => {
+    if (savedEnv === undefined) delete process.env[ENV];
+    else process.env[ENV] = savedEnv;
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+
+  it('refuses a glob over another folder as one entry naming only the pattern, listing no file', async () => {
+    const server = new McpServer({ name: 'test', version: '0.0.1' });
+    const cb = captureToolCallback(server, 'analyze_batch');
+    const pattern = path.join(base, 'secret', '*.jpg');
+    const result = await cb({ imagePaths: [pattern], lenses: ['dating'], refresh: true });
+
+    expect(result.isError).toBeFalsy();
+    expect(mockAnalyze).not.toHaveBeenCalled();
+    const payload = JSON.parse(result.content[0].text);
+    expect(payload.results).toHaveLength(1);
+    expect(payload.results[0].input).toBe(pattern);
+    expect(payload.results[0].imagePath).toBeUndefined();
+    expect(payload.results[0].resolvedPath).toBeUndefined();
+    expect(payload.results[0].error.code).toBe('PATH_OUTSIDE_ALLOWED_DIRS');
+    expect(result.content[0].text).not.toContain('one.jpg');
+    expect(result.content[0].text).not.toContain('two.jpg');
+  });
+
+  it('refuses a glob whose base is a parent of the allowed folder', async () => {
+    const server = new McpServer({ name: 'test', version: '0.0.1' });
+    const cb = captureToolCallback(server, 'analyze_batch');
+    const result = await cb({ imagePaths: [path.join(base, '**', '*.jpg')], lenses: ['dating'], refresh: true });
+    const payload = JSON.parse(result.content[0].text);
+    expect(payload.results).toHaveLength(1);
+    expect(payload.results[0].error.code).toBe('PATH_OUTSIDE_ALLOWED_DIRS');
+    expect(result.content[0].text).not.toContain('secret');
+  });
+
+  it.each(['secret', 'no-such'])('refuses a pattern with a .. segment through %s as one entry, analyzing nothing', async (via) => {
+    const server = new McpServer({ name: 'test', version: '0.0.1' });
+    const cb = captureToolCallback(server, 'analyze_batch');
+    const pattern = `${base}/${via}/../allowed/*.jpg`;
+    const result = await cb({ imagePaths: [pattern], lenses: ['dating'], refresh: true });
+    expect(mockAnalyze).not.toHaveBeenCalled();
+    const payload = JSON.parse(result.content[0].text);
+    expect(payload.results).toHaveLength(1);
+    expect(payload.results[0].input).toBe(pattern);
+    expect(payload.results[0].error.code).toBe('PATH_OUTSIDE_ALLOWED_DIRS');
+  });
+
+  it('without an allow-list, a pattern with .. still expands', async () => {
+    delete process.env[ENV];
+    mockAnalyze.mockResolvedValue(freshAnalyzeResp(1));
+    const server = new McpServer({ name: 'test', version: '0.0.1' });
+    const cb = captureToolCallback(server, 'analyze_batch');
+    const result = await cb({ imagePaths: [`${base}/secret/../allowed/*.jpg`], lenses: ['dating'], refresh: true });
+    expect(result.isError).toBeFalsy();
+    expect(mockAnalyze).toHaveBeenCalledTimes(2);
+  });
+
+  it('still expands a glob inside the allowed folder, silently dropping a match that links outside', async () => {
+    mockAnalyze.mockResolvedValue(freshAnalyzeResp(1));
+    const server = new McpServer({ name: 'test', version: '0.0.1' });
+    const cb = captureToolCallback(server, 'analyze_batch');
+    const result = await cb({ imagePaths: [path.join(base, 'allowed', '*.jpg')], lenses: ['dating'], refresh: true });
+
+    expect(result.isError).toBeFalsy();
+    expect(mockAnalyze).toHaveBeenCalledTimes(2);
+    const payload = JSON.parse(result.content[0].text);
+    expect(payload.results).toHaveLength(2);
+    expect(payload.results.every((r: any) => !('error' in r))).toBe(true);
+    expect(result.content[0].text).not.toContain('escape.jpg');
   });
 });
 

@@ -128,7 +128,8 @@ function instrumentServer(server: McpServer, opts: TelemetryOpts): McpServer {
  *
  * Creates a singleton PhototologyClient for connection reuse, and wraps tool
  * registration so every invocation emits one `mcp_tool_called` telemetry event
- * (fire-and-forget; honors PHOTOTOLOGY_MCP_NO_TELEMETRY). The event carries the
+ * (fire-and-forget; skipped under PHOTOTOLOGY_MCP_NO_TELEMETRY, DO_NOT_TRACK or
+ * NODE_ENV=test, see shouldSkip in ../phone-home). The event carries the
  * tool name, ok/duration, an error code on failure (including local failures
  * that never reach the API), and analyze enrichment — the visibility the
  * route-based `api_request` events can't provide.

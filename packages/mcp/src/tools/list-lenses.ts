@@ -69,6 +69,7 @@ export function registerListLenses(server: McpServer, client: PhototologyClient)
   s.registerTool(
     'list_lenses',
     {
+      title: 'List lenses and stacks',
       description: [
         'List every available lens and stack on this server, with descriptions and the output fields each lens owns.',
         '',

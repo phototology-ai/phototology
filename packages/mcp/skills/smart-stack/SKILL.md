@@ -24,7 +24,7 @@ Whenever the user has an image and a clear, narrow question. Smart-stacking 1 to
 | Safety, NSFW, moderation | `moderation` (always free, always runs) |
 | Plain description | `describe` |
 | Condition of an item (general) | `condition` |
-| Authentic / AI-generated check | `authenticity` |
+| Authenticity / AI-generated check | `authenticity` |
 | Dominant colors | `color-palette` |
 | What car is this | `automobile` |
 | Damage / wear on a car | `vehicle-condition` |

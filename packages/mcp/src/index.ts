@@ -75,7 +75,7 @@ export function buildServerInstructions(): string {
     'Each skill has a SKILL.md that the user can copy into their Claude skills directory.',
     '',
     '## When you run out of credits',
-    'You will receive a tool error whose text starts "Out of credits." That response also carries a `structuredContent.actions` array with an `open_url` action pointing at the wallet. **Surface the URL to the user verbatim**; they need to open it in a browser to buy credits. Do not retry the failed call until they confirm they purchased.',
+    'You will receive a tool error whose text starts "OUT_OF_CREDITS:". That response also carries a `structuredContent.actions` array with an `open_url` action pointing at the wallet. **Surface the URL to the user verbatim**. They need to open it in a browser to buy credits. Do not retry the failed call until they confirm they purchased.',
     '',
     '## Response shape',
     'Analyze output is flat-keyed JSON: top-level keys are field names (e.g. `estimatedDate`, `peopleCount`, `atmosphere`), not lens names. Use `list_lenses` to map fields back to their owning lens.',

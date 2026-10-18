@@ -8,11 +8,33 @@ describe('phoneHome', () => {
     fetchMock = jest.fn().mockResolvedValue({ ok: true, status: 204 });
     globalThis.fetch = fetchMock as unknown as typeof fetch;
     delete process.env.PHOTOTOLOGY_MCP_NO_TELEMETRY;
+    delete process.env.DO_NOT_TRACK;
+    // These tests assert on the outbound request, so they opt back in to
+    // telemetry under NODE_ENV=test. fetch is mocked above, so nothing leaves.
+    process.env.PHOTOTOLOGY_MCP_TELEMETRY_IN_TESTS = '1';
   });
 
   afterEach(() => {
     globalThis.fetch = realFetch;
     delete process.env.PHOTOTOLOGY_MCP_NO_TELEMETRY;
+    delete process.env.PHOTOTOLOGY_MCP_TELEMETRY_IN_TESTS;
+    delete process.env.DO_NOT_TRACK;
+  });
+
+  test('skips under NODE_ENV=test by default', () => {
+    delete process.env.PHOTOTOLOGY_MCP_TELEMETRY_IN_TESTS;
+    const fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 204 }));
+    phoneHome('mcp_initialize', {}, { apiKey: 'pt_test_anything' });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  test('fires under NODE_ENV=test when PHOTOTOLOGY_MCP_TELEMETRY_IN_TESTS=1', () => {
+    expect(process.env.NODE_ENV).toBe('test');
+    expect(process.env.PHOTOTOLOGY_MCP_TELEMETRY_IN_TESTS).toBe('1');
+    phoneHome('mcp_initialize', { mcpVersion: '1.1.3' }, { apiKey: 'pt_test_anything' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toBe('https://api.phototology.com/v1/mcp/event');
   });
 
   test('posts mcp_initialize with client info to /v1/mcp/event', () => {
@@ -75,6 +97,30 @@ describe('phoneHome', () => {
       { apiKey: 'pt_live_secret' },
     );
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test('skips when DO_NOT_TRACK=1', () => {
+    process.env.DO_NOT_TRACK = '1';
+    phoneHome('mcp_initialize', { mcpVersion: '1.1.3' }, { apiKey: 'pt_live_secret' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test('skips when DO_NOT_TRACK=true (case-insensitive)', () => {
+    process.env.DO_NOT_TRACK = 'True';
+    phoneHome('mcp_initialize', { mcpVersion: '1.1.3' }, { apiKey: 'pt_live_secret' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test('DO_NOT_TRACK=1 also silences per-tool events', () => {
+    process.env.DO_NOT_TRACK = '1';
+    mcpToolEvent('analyze_photo', { ok: true, durationMs: 5 }, { apiKey: 'pt_live_secret' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test('DO_NOT_TRACK=0 does not disable telemetry', () => {
+    process.env.DO_NOT_TRACK = '0';
+    phoneHome('mcp_initialize', { mcpVersion: '1.1.3' }, { apiKey: 'pt_live_secret' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   test('skips when apiKey is empty', () => {

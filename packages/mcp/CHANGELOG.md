@@ -22,15 +22,27 @@ Typed results. Every tool now declares an `outputSchema` and returns `structured
 - **`purchase_credits`** documents its `{ url, actions }` shape; no field changed.
 - **`enrich_photo` result** is `{ mode, savedTo?, imageBase64?, sidecar?, formatsWritten, lensVersions, sha256, registryId?, credentials?, reason?, usage: { creditsCharged, usd: { charged } }, warnings?, meta? }`. `usage.creditsCharged` is the canonical cost field; `meta.creditsCharged` is still present for compatibility. The top-level `creditsCharged` that the `outputPath` path used to return is gone, and so is `object`. `mode` is `file` when the metadata went into the image, or `sidecar` when the API returned an XMP packet instead and left the file untouched; a sidecar result writes nothing to `outputPath`.
 
-## [1.3.0] — 2026-06-02
+### Security
+Trust patch: local file reads and writes are bounded, and an output never replaces a file you did not ask to replace.
+- **`enrich_photo` `overwrite`.** `outputPath` refuses an existing file with `OUTPUT_EXISTS` unless you pass `overwrite: true`. The check runs before any credits are spent, and the write itself opens the file exclusively, so a file that appears during the call is refused too.
+- **The output is never the input.** `outputPath` naming the input file, or a link to it, is refused with `OUTPUT_IS_INPUT`, even with `overwrite: true`.
+- **Symlinks are never written through.** A symlink at `outputPath` is refused with `OUTPUT_IS_SYMLINK`, even with `overwrite: true`, and the write opens the file without following links. A symlinked file passed as an input is still refused with `SYMLINK_REJECTED`.
+- **`PHOTOTOLOGY_MCP_ALLOWED_DIRS`.** An optional list of folders, separated by `:` (`;` on Windows), that bounds reads (`imagePath`, `imagePaths`), the `enrich_photo` output path and `analyze_batch` globs. Paths are judged after symlinks are resolved, and a path outside the folders is refused with `PATH_OUTSIDE_ALLOWED_DIRS`. A glob whose fixed folder part is outside them comes back as one error row naming only the pattern, and a match that leads outside is skipped. While the variable is set, any path or pattern with a `..` segment is refused. Unset, any path the server process can open is allowed, as before.
+- **`resolvedPath`.** A result read through a symlinked folder (`analyze_photo`, `analyze_batch` rows, `lookup_photo`, `enrich_photo`) names the real file that was read in `resolvedPath`. It is absent for a plain path.
+- **Tool titles.** Every tool carries a human-readable `title`: "Analyze a photo", "Analyze a batch of photos", "List lenses and stacks", "Look up a photo in the registry", "Check credit balance", "Buy credits" and "Write analysis into a copy of the photo".
+- **`server.json`.** Registry metadata for the MCP Registry under the name `com.phototology/mcp`, listing the npm package, its stdio transport and its environment variables.
+- **`SECURITY.md`.** Says what the server reads, what it sends, what it never sends, what is not a security boundary, and how to report a vulnerability.
+- **Telemetry stays off in tests and under `DO_NOT_TRACK`.** No event is sent when `NODE_ENV=test` (a test opts back in with `PHOTOTOLOGY_MCP_TELEMETRY_IN_TESTS`), or when `DO_NOT_TRACK` or `PHOTOTOLOGY_MCP_NO_TELEMETRY` is `1`, `true`, `yes` or `on`.
+
+## [1.3.0] - 2026-06-02
 
 ### Changed
 - Bundles **`@phototology/sdk@1.3.0`**, which **bounds total request time** (30s per attempt + a 90s overall wall-clock budget) so a stalled upstream can't hang a call for minutes. No MCP API change.
 
 ### Fixed
-- README `analyze_batch` description corrected to "5 in flight" — the actual per-photo analyze concurrency since 1.2.1 (the 1.2.1 tarball shipped a stale "25 in flight").
+- README `analyze_batch` description corrected to "5 in flight", the actual per-photo analyze concurrency since 1.2.1 (the 1.2.1 tarball shipped a stale "25 in flight").
 
-## [1.2.1] — 2026-06-01
+## [1.2.1] - 2026-06-01
 
 Patch release hardening the local-file path from live dogfooding. All additive/non-breaking.
 
@@ -40,11 +52,11 @@ Patch release hardening the local-file path from live dogfooding. All additive/n
 ### Fixed
 - **`analyze_batch` no longer self-throttles.** Concurrency lowered from 25 to 5 to match the API's per-user `/analyze` cap, so large batches queue client-side instead of getting 429'd. (The previous 25 accounted only for the 600 RPM rate limit, not the separate concurrency limiter.)
 - **`estimatedCreditsSaved` now counts local-file savings.** It derives from each photo's real `creditsCharged` (a zero-charge analyze is a cache hit), so server-side delta savings on local files are no longer invisible.
-- **`vehicle-condition` removed from the selectable `lenses`/`modules` enum** — it is stack-only and the API rejects it on direct selection.
+- **`vehicle-condition` removed from the selectable `lenses`/`modules` enum**: it is stack-only and the API rejects it on direct selection.
 
 > Related: `warmCaption` no longer truncates mid-word and its cap was raised 150→240. That fix lives in `@phototology/core` (the analysis backend) and reaches you via the API, not this package.
 
-## [1.2.0] — 2026-06-01
+## [1.2.0] - 2026-06-01
 
 First coordinated 1.2.0 cut with `@phototology/sdk`. Adds a seventh tool (`enrich_photo`), local-file and base64 image input on every image-accepting tool, and per-tool usage telemetry. Existing `imageUrl` callers see no behavior change.
 
@@ -74,28 +86,28 @@ First coordinated 1.2.0 cut with `@phototology/sdk`. Adds a seventh tool (`enric
 
 - Added `fast-glob ^3.3.2` for local-image glob expansion (no native bindings).
 
-## [1.1.3] — 2026-05-21
+## [1.1.3] - 2026-05-21
 
 ### Added
 
-- **Anonymous client-discovery telemetry.** `src/phone-home.ts` fires a single `POST /v1/mcp/event` to `api.phototology.com` when the MCP initialize handshake completes, carrying the editor's stated `clientInfo.name`/`.version` (e.g. `claude-desktop 0.7.0`, `cursor 0.42`) and the MCP package version. Closes the discovery gap left by the api-side `api_request` event, which only fires after an authenticated HTTP call lands and therefore can't see the "downloaded MCP, ran handshake, never made a real tool call" funnel. Posture: no third-party SDK bundled (this is what triggered the 2026-05-17 revert in `bc021f96`); the only outbound destination is `api.phototology.com` — the same host every analyze + lookup call already goes through. Authentication uses the user's existing `PHOTOTOLOGY_API_KEY`. Errors are swallowed completely (telemetry must never crash the MCP). **Opt out with `PHOTOTOLOGY_MCP_NO_TELEMETRY=1`** in the same env block as your API key. PII boundary: image content, paths, prompts, tool inputs/outputs, and the API key itself are never sent.
+- **Anonymous client-discovery telemetry.** `src/phone-home.ts` fires a single `POST /v1/mcp/event` to `api.phototology.com` when the MCP initialize handshake completes, carrying the editor's stated `clientInfo.name`/`.version` (e.g. `claude-desktop 0.7.0`, `cursor 0.42`) and the MCP package version. Closes the discovery gap left by the api-side `api_request` event, which only fires after a keyed HTTP call lands and therefore can't see the "downloaded MCP, ran handshake, never made a real tool call" funnel. Posture: no third-party SDK bundled (this is what triggered the 2026-05-17 revert in `bc021f96`); the only outbound destination is `api.phototology.com`, the same host every analyze + lookup call already goes through. Authentication uses the user's existing `PHOTOTOLOGY_API_KEY`. Errors are swallowed completely (telemetry must never crash the MCP). **Opt out with `PHOTOTOLOGY_MCP_NO_TELEMETRY=1`** in the same env block as your API key. PII boundary: image content, paths, prompts, tool inputs/outputs, and the API key itself are never sent.
 
 ### Security
 
-- **Editor-config writes now use `mode: 0o600`** (`src/setup.ts:writeJsonConfig` + `writeTomlConfig`). The written files contain `PHOTOTOLOGY_API_KEY=pt_live_...`. Pre-fix permissions defaulted to the user's umask (typically `0o644` — world-readable). On shared dev machines or cloud IDEs (Codespaces, Gitpod), the key was readable by any other user on the box. Closes Audit #5 HIGH (2026-05-19).
+- **Editor-config writes now use `mode: 0o600`** (`src/setup.ts:writeJsonConfig` + `writeTomlConfig`). The written files contain `PHOTOTOLOGY_API_KEY=pt_live_...`. Pre-fix permissions defaulted to the user's umask (typically `0o644`, world-readable). On shared dev machines or cloud IDEs (Codespaces, Gitpod), the key was readable by any other user on the box. Closes Audit #5 HIGH (2026-05-19).
 
 ### Changed
 
 - **npm `description` field rewritten** to claim the differentiator (registry + composable lenses + structured JSON output) rather than the generic "MCP server for Phototology AI vision API". Closes Audit #1 EC1 + Audit #2 AM-H1 (2026-05-19).
 - **npm `keywords` extended** with the differentiating terms (`registry`, `photo-registry`, `perceptual-hash`, `visual-memory`, `cache-hits`, `delta-billing`, `analyze-once`, `mcp-server`) so npm search + LLM-readable surfaces surface the actual moat. Closes Audit #1 EC2 + Audit #2 AM-H2 (2026-05-19).
-- **Copy consistency cleanup.** Removed stale lens-count claims ("16 lenses", "~16 credits per photo") across server instructions, tool descriptions, README, and companion skills. Lens catalog size now lives entirely at runtime — agents call `list_lenses` for the current count. The `full-analysis` stack is now described as "runs every lens in the catalog" instead of naming a fixed credit total.
+- **Copy consistency cleanup.** Removed stale lens-count claims ("16 lenses", "~16 credits per photo") across server instructions, tool descriptions, README, and companion skills. Lens catalog size now lives entirely at runtime: agents call `list_lenses` for the current count. The `full-analysis` stack is now described as "runs every lens in the catalog" instead of naming a fixed credit total.
 - **Signup grant wording aligned.** `photo-shared` skill no longer claims "1,000 free community credits per month" (a pricing-v0 leftover). Server instructions now state the signup grant is "one-time, not recurring" to prevent agents inferring monthly cadence.
 - **`get_credits` description.** "preset" → "stack" (matches 1.1.0 rename), dropped the misleading "~16 credits per photo" line.
 - **`analyze_batch` description.** Concurrency claims now match the code: per-URL lookups at 20 in flight (was "chunked into 50s server-side"), per-photo analyze at 25 in flight (was "5 in flight").
 
 No tool surface changes. The only behavioral delta vs 1.1.2 is the new initialize-time telemetry beacon to `api.phototology.com/v1/mcp/event` (see Added above). Set `PHOTOTOLOGY_MCP_NO_TELEMETRY=1` to disable.
 
-## [1.1.2] — 2026-05-18
+## [1.1.2] - 2026-05-18
 
 ### Changed
 
@@ -104,13 +116,13 @@ No tool surface changes. The only behavioral delta vs 1.1.2 is the new initializ
 
 No functional changes. Tool surface, server instructions, skills, and dependencies all identical to 1.1.1.
 
-## [1.1.1] — 2026-05-17
+## [1.1.1] - 2026-05-17
 
 ### Changed
 
 - Update server instructions, README, and `phototology:check-credits` skill to reflect the pricing v1 launch: 5,000-credit signup ladder (1,000 for verifying an email + 4,000 for adding a card-on-file) replaces the prior 1,000/month community grant. Pack table ($10 / $100 / $1,000 for 1,000 / 10,000 / 100,000 credits), $/credit, and the first-purchase 2x bonus are unchanged. `buildServerInstructions` is now exported for testability.
 
-## [1.1.0] — 2026-05-17
+## [1.1.0] - 2026-05-17
 
 ### Added
 
@@ -119,14 +131,14 @@ No functional changes. Tool surface, server instructions, skills, and dependenci
 - `analyze_batch` tool. Analyze 1 to 200 INDEPENDENT photos in a single call. Internally bulk-looks-up against the registry (chunked into 50s, free), serves cache hits at 0 credits, runs per-photo analyze with bounded concurrency (5 in flight) for the misses. Returns per-photo outcomes plus `totalCacheHits`, `totalAnalyzed`, `totalCreditsCharged`, and `estimatedCreditsSaved` so the registry's value is visible. For thousands of photos, the agent loops the tool in slices of 200.
 - Structured `actions` payload on `CreditExhaustedError`. Rich-rendering MCP clients (Claude Code, Cursor, future Claude.ai) now receive a typed `open_url` action alongside the text fallback. Built against MCP spec 2025-11-25. Legacy clients keep seeing the URL in the text.
 - Five companion skills shipped under `node_modules/@phototology/mcp/skills/`:
-  - `phototology:lookup-first` — always check the registry before spending credits (single photo).
-  - `phototology:check-credits` — pre-flight balance read before a big batch.
-  - `phototology:smart-stack` — smart-pick the cheapest lens subset for a specific question.
-  - `phototology:photo-shared` — when the user attaches, drops, or references an image, route it through Phototology for the cheapest accurate answer.
-  - `phototology:batch-analyze` — any job with 2 or more photos. Uses `analyze_batch` (not a loop of `analyze_photo`). Documents the loop pattern for thousand-photo jobs.
-- Optional Claude Code `UserPromptSubmit` hook documented in the README — auto-trigger Phototology suggestions when the user attaches an image.
+  - `phototology:lookup-first`: always check the registry before spending credits (single photo).
+  - `phototology:check-credits`: pre-flight balance read before a big batch.
+  - `phototology:smart-stack`: smart-pick the cheapest lens subset for a specific question.
+  - `phototology:photo-shared`: when the user attaches, drops, or references an image, route it through Phototology for the cheapest accurate answer.
+  - `phototology:batch-analyze`: any job with 2 or more photos. Uses `analyze_batch` (not a loop of `analyze_photo`). Documents the loop pattern for thousand-photo jobs.
+- Optional Claude Code `UserPromptSubmit` hook documented in the README: auto-trigger Phototology suggestions when the user attaches an image.
 - Explicit tool annotations on every tool: `readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true`, `openWorldHint` (true for outward calls, false for `list_lenses`).
-- Dogfood kit at `scripts/dogfood/` — a 50-line mock server that returns 402 on `/v1/analyze`, plus a 5-minute walkthrough for verifying the structured-action rendering in a real Claude Code session.
+- Dogfood kit at `scripts/dogfood/`: a 50-line mock server that returns 402 on `/v1/analyze`, plus a 5-minute walkthrough for verifying the structured-action rendering in a real Claude Code session.
 
 ### Changed
 
@@ -147,7 +159,7 @@ No functional changes. Tool surface, server instructions, skills, and dependenci
 
 - `@phototology/sdk@1.0.2` ships a strictly additive `client.usage()` method returning the dual-pool balance from `GET /v1/usage`. No existing SDK method signatures change.
 
-## [1.0.1] — 2026-04-17
+## [1.0.1] - 2026-04-17
 
 - Initial public release of the stdio MCP server wrapping `@phototology/sdk`.
 - Three tools: `analyze_photo`, `list_modules`, `lookup_photo`.

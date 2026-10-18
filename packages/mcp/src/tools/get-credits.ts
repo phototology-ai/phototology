@@ -23,6 +23,7 @@ export function registerGetCredits(server: McpServer, client: PhototologyClient)
   s.registerTool(
     'get_credits',
     {
+      title: 'Check credit balance',
       description: [
         'Read the current credit balance for the account behind this API key. Free. Does not bill credits.',
         '',

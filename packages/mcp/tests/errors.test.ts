@@ -22,8 +22,9 @@ describe('renderToolError', () => {
       expect(result.content).toHaveLength(1);
       expect(result.content[0].type).toBe('text');
       const text = result.content[0].text;
-      // Spec §7: the stop-signal phrases a model must read.
-      expect(text).toContain('OUT_OF_CREDITS');
+      // Spec §7: the stop-signal phrases a model must read. The server instructions
+      // quote this exact opening (tests/server-instructions.test.ts).
+      expect(text.startsWith('OUT_OF_CREDITS:')).toBe(true);
       expect(text).toContain('NOT retryable');
       expect(text).toContain('STOP');
       expect(text).toContain('Agents cannot purchase');

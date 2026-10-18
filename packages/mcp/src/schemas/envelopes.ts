@@ -43,6 +43,8 @@ export const AnalyzePhotoOutputSchema = z.looseObject({
   /** Absent when the photo has no name to link to (a URL analyzed by the `pt_test_` sandbox). */
   resource: z.string().optional(),
   livemode: z.boolean(),
+  /** The real file read, present only when a local path went through a symlinked folder. */
+  resolvedPath: z.string().optional(),
 });
 export type AnalyzePhotoOutput = z.infer<typeof AnalyzePhotoOutputSchema>;
 
@@ -62,6 +64,8 @@ const BatchPhotoResultSchema = AnalyzePhotoOutputSchema.extend({
 const BatchErrorResultSchema = z.looseObject({
   error: z.looseObject({ code: z.string(), message: z.string() }),
   input: z.string(),
+  /** The real file read, present only when a local path went through a symlinked folder. */
+  resolvedPath: z.string().optional(),
 });
 
 /** One photo in a `dryRun: true` batch: what the registry knows, nothing billed. */
@@ -71,6 +75,8 @@ const BatchDryRunResultSchema = z.looseObject({
   cachedLenses: z.array(z.string()),
   missingLenses: z.array(z.string()),
   resource: z.string().optional(),
+  /** The real file read, present only when a local path went through a symlinked folder. */
+  resolvedPath: z.string().optional(),
 });
 
 export const AnalyzeBatchOutputSchema = z.looseObject({
@@ -122,6 +128,8 @@ export const LookupPhotoOutputSchema = z.looseObject({
   receipts: Receipts,
   credentials: Credentials,
   resource: z.string().optional(),
+  /** The real file read, present only when a local path went through a symlinked folder. */
+  resolvedPath: z.string().optional(),
 });
 export type LookupPhotoOutput = z.infer<typeof LookupPhotoOutputSchema>;
 
@@ -196,5 +204,7 @@ export const EnrichPhotoOutputSchema = z.looseObject({
   credentials: Credentials,
   reason: z.string().optional(),
   usage: z.looseObject({ creditsCharged: z.number(), usd: z.looseObject({ charged: Usd }) }),
+  /** The real file read, present only when a local path went through a symlinked folder. */
+  resolvedPath: z.string().optional(),
 });
 export type EnrichPhotoOutput = z.infer<typeof EnrichPhotoOutputSchema>;

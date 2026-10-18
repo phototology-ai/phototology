@@ -8,6 +8,10 @@ import {
   expandGlobs,
   validateBase64,
   LocalImageError,
+  readLocalImage,
+  resolveReal,
+  assertInsideAllowedDirs,
+  writeOutputFile,
 } from '../src/lib/local-image';
 
 describe('resolvePath', () => {
@@ -248,6 +252,23 @@ describe('expandGlobs', () => {
     ].sort());
   });
 
+  it('refuses a relative glob before expanding it; an absolute glob still expands', () => {
+    // A relative glob would expand from the server's working directory, which
+    // varies by host, so it is refused like a relative literal path.
+    const cwd = process.cwd();
+    process.chdir(tmpDir); // a relative '*.jpg' would match a.jpg and b.jpg here
+    try {
+      for (const pattern of ['*.jpg', './*.jpg', '../*/*.jpg', '~other/*.jpg']) {
+        expect(() => expandGlobs([pattern])).toThrow(
+          expect.objectContaining({ code: 'RELATIVE_PATH_REJECTED' }),
+        );
+      }
+    } finally {
+      process.chdir(cwd);
+    }
+    expect(expandGlobs([`${tmpDir}/*.jpg`])).toHaveLength(2);
+  });
+
   it('passes through literal paths', () => {
     const literal = path.join(tmpDir, 'c.png');
     const result = expandGlobs([literal]);
@@ -286,6 +307,220 @@ describe('expandGlobs', () => {
       expect((err as LocalImageError).code).toBe('GLOB_TOO_LARGE');
     } finally {
       fs.rmSync(manyDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('real paths and PHOTOTOLOGY_MCP_ALLOWED_DIRS', () => {
+  const JPEG = Buffer.from([
+    0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00,
+    0x01, 0x01, 0x00, 0x00, 0x48, 0x00, 0x48, 0x00, 0x00,
+  ]);
+  const ENV = 'PHOTOTOLOGY_MCP_ALLOWED_DIRS';
+  let base: string;
+  let savedEnv: string | undefined;
+
+  function codeOf(fn: () => unknown): string | undefined {
+    try {
+      fn();
+    } catch (err) {
+      return (err as LocalImageError).code;
+    }
+    return undefined;
+  }
+
+  beforeAll(() => {
+    // Real path of the temp root, so macOS's /var -> /private/var link never colors a result.
+    base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-allowed-dirs-')));
+    for (const d of ['a', 'a2', 'b', 'outside', 'real']) fs.mkdirSync(path.join(base, d));
+    for (const d of ['a', 'a2', 'b', 'outside', 'real']) fs.writeFileSync(path.join(base, d, 'photo.jpg'), JPEG);
+    fs.symlinkSync(path.join(base, 'real'), path.join(base, 'linked'));
+    fs.symlinkSync(path.join(base, 'outside', 'photo.jpg'), path.join(base, 'a', 'escape.jpg'));
+    fs.symlinkSync(path.join(base, 'outside'), path.join(base, 'a', 'escape-dir'));
+  });
+
+  beforeEach(() => {
+    savedEnv = process.env[ENV];
+    delete process.env[ENV];
+  });
+
+  afterEach(() => {
+    if (savedEnv === undefined) delete process.env[ENV];
+    else process.env[ENV] = savedEnv;
+  });
+
+  afterAll(() => {
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+
+  test('a file under a symlinked parent folder is read and reported with resolvedPath when no allow-list is set', () => {
+    const viaLink = path.join(base, 'linked', 'photo.jpg');
+    const real = path.join(base, 'real', 'photo.jpg');
+    expect(resolveReal(viaLink)).toEqual({ resolved: real, viaSymlink: true });
+    const out = readLocalImage(viaLink);
+    expect(out.bytes.equals(JPEG)).toBe(true);
+    expect(out.viaSymlink).toBe(true);
+    expect(out.resolvedPath).toBe(real);
+    // readImage keeps its Buffer-returning signature.
+    expect(readImage(viaLink).equals(JPEG)).toBe(true);
+  });
+
+  test('a plain path reports viaSymlink false', () => {
+    const plain = path.join(base, 'real', 'photo.jpg');
+    expect(resolveReal(plain)).toEqual({ resolved: plain, viaSymlink: false });
+    expect(readLocalImage(plain).viaSymlink).toBe(false);
+  });
+
+  test('resolveReal maps a missing file to FILE_NOT_FOUND', () => {
+    expect(codeOf(() => resolveReal(path.join(base, 'real', 'missing.jpg')))).toBe('FILE_NOT_FOUND');
+  });
+
+  test('PHOTOTOLOGY_MCP_ALLOWED_DIRS=/a rejects /a2/photo.jpg with PATH_OUTSIDE_ALLOWED_DIRS', () => {
+    process.env[ENV] = path.join(base, 'a');
+    expect(codeOf(() => readImage(path.join(base, 'a2', 'photo.jpg')))).toBe('PATH_OUTSIDE_ALLOWED_DIRS');
+    expect(codeOf(() => assertInsideAllowedDirs(path.join(base, 'a2', 'photo.jpg')))).toBe('PATH_OUTSIDE_ALLOWED_DIRS');
+    // The folder itself and anything under it pass.
+    expect(readImage(path.join(base, 'a', 'photo.jpg')).equals(JPEG)).toBe(true);
+    expect(() => assertInsideAllowedDirs(path.join(base, 'a'))).not.toThrow();
+  });
+
+  test('PHOTOTOLOGY_MCP_ALLOWED_DIRS=/a rejects a symlink inside /a that resolves outside /a', () => {
+    process.env[ENV] = path.join(base, 'a');
+    expect(codeOf(() => readImage(path.join(base, 'a', 'escape.jpg')))).toBe('PATH_OUTSIDE_ALLOWED_DIRS');
+    expect(codeOf(() => readImage(path.join(base, 'a', 'escape-dir', 'photo.jpg')))).toBe('PATH_OUTSIDE_ALLOWED_DIRS');
+  });
+
+  test('a refusal names the path as given, never where an outside link points', () => {
+    process.env[ENV] = path.join(base, 'a');
+    let message = '';
+    try {
+      readImage(path.join(base, 'a', 'escape.jpg'));
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    expect({
+      namesGivenPath: message.includes(path.join(base, 'a', 'escape.jpg')),
+      revealsLinkTarget: message.includes(path.join(base, 'outside')),
+    }).toEqual({ namesGivenPath: true, revealsLinkTarget: false });
+  });
+
+  test('PHOTOTOLOGY_MCP_ALLOWED_DIRS with two entries accepts a file under the second', () => {
+    process.env[ENV] = [path.join(base, 'a'), path.join(base, 'b')].join(path.delimiter);
+    expect(readImage(path.join(base, 'b', 'photo.jpg')).equals(JPEG)).toBe(true);
+    expect(codeOf(() => readImage(path.join(base, 'outside', 'photo.jpg')))).toBe('PATH_OUTSIDE_ALLOWED_DIRS');
+  });
+
+  test('an allow-list entry given through a symlink is resolved to its real path', () => {
+    process.env[ENV] = path.join(base, 'linked');
+    expect(readImage(path.join(base, 'real', 'photo.jpg')).equals(JPEG)).toBe(true);
+  });
+
+  test('an allow-list made only of unusable entries refuses everything instead of allowing everything', () => {
+    process.env[ENV] = ['relative/dir', ''].join(path.delimiter);
+    expect(codeOf(() => readImage(path.join(base, 'a', 'photo.jpg')))).toBe('PATH_OUTSIDE_ALLOWED_DIRS');
+  });
+
+  test('a blank PHOTOTOLOGY_MCP_ALLOWED_DIRS means no allow-list', () => {
+    process.env[ENV] = '  ';
+    expect(readImage(path.join(base, 'outside', 'photo.jpg')).equals(JPEG)).toBe(true);
+  });
+
+  test('a missing file outside the allowed folders answers PATH_OUTSIDE_ALLOWED_DIRS, not FILE_NOT_FOUND', () => {
+    process.env[ENV] = path.join(base, 'a');
+    expect(codeOf(() => readImage(path.join(base, 'outside', 'missing.jpg')))).toBe('PATH_OUTSIDE_ALLOWED_DIRS');
+    expect(codeOf(() => readImage(path.join(base, 'no-such-dir', 'deeper', 'missing.jpg')))).toBe('PATH_OUTSIDE_ALLOWED_DIRS');
+    // Inside the allowed folder, a missing file is still FILE_NOT_FOUND.
+    expect(codeOf(() => readImage(path.join(base, 'a', 'missing.jpg')))).toBe('FILE_NOT_FOUND');
+  });
+
+  test('expandGlobs refuses a pattern whose fixed folder climbs out with .., and expands one inside', () => {
+    process.env[ENV] = path.join(base, 'a');
+    expect(codeOf(() => expandGlobs([path.join(base, 'a', '..', 'outside', '*.jpg')]))).toBe('PATH_OUTSIDE_ALLOWED_DIRS');
+    expect(expandGlobs([path.join(base, 'a', '*.jpg')])).toEqual([path.join(base, 'a', 'photo.jpg')]);
+  });
+
+  test('link/.. is resolved by the kernel, not lexically: a missing file reached that way outside is PATH_OUTSIDE_ALLOWED_DIRS', () => {
+    fs.mkdirSync(path.join(base, 'outside', 'sub'), { recursive: true });
+    if (!fs.existsSync(path.join(base, 'a', 'deep'))) fs.symlinkSync(path.join(base, 'outside', 'sub'), path.join(base, 'a', 'deep'));
+    process.env[ENV] = path.join(base, 'a');
+    const via = (name: string): string => `${path.join(base, 'a', 'deep')}/../${name}`;
+    // a/missing.jpg lexically, outside/missing.jpg to the kernel.
+    expect(codeOf(() => readImage(via('missing.jpg')))).toBe('PATH_OUTSIDE_ALLOWED_DIRS');
+    // a/photo.jpg lexically (it exists), outside/photo.jpg to the kernel.
+    expect(codeOf(() => readImage(via('photo.jpg')))).toBe('PATH_OUTSIDE_ALLOWED_DIRS');
+    expect(resolveReal(via('photo.jpg')).resolved).toBe(path.join(base, 'outside', 'photo.jpg'));
+    // A glob whose fixed part goes through the link and back up is refused whole.
+    expect(codeOf(() => expandGlobs([via('*.jpg')]))).toBe('PATH_OUTSIDE_ALLOWED_DIRS');
+  });
+
+  test('under an allow-list, any .. segment is refused the same way whether the outside folder exists or not', () => {
+    process.env[ENV] = path.join(base, 'a');
+    const viaExisting = `${base}/outside/../a/photo.jpg`;
+    const viaMissing = `${base}/no-such/x/../../a/photo.jpg`;
+    expect(codeOf(() => readImage(viaExisting))).toBe('PATH_OUTSIDE_ALLOWED_DIRS');
+    expect(codeOf(() => readImage(viaMissing))).toBe('PATH_OUTSIDE_ALLOWED_DIRS');
+    expect(codeOf(() => readImage(`${base}/a/../a/photo.jpg`))).toBe('PATH_OUTSIDE_ALLOWED_DIRS');
+    expect(codeOf(() => expandGlobs([`${base}/no-such/../a/*.jpg`]))).toBe('PATH_OUTSIDE_ALLOWED_DIRS');
+    expect(codeOf(() => expandGlobs([`${base}\\outside\\..\\a/*.jpg`]))).toBe('PATH_OUTSIDE_ALLOWED_DIRS');
+  });
+
+  test('without an allow-list, .. still resolves', () => {
+    expect(readImage(`${base}/outside/../a/photo.jpg`).equals(JPEG)).toBe(true);
+    expect(expandGlobs([`${base}/outside/../a/*.jpg`])).toHaveLength(1);
+  });
+
+  test('a final-component symlink inside an allowed folder that stays inside is still refused as a symlink', () => {
+    fs.symlinkSync(path.join(base, 'a', 'photo.jpg'), path.join(base, 'a', 'inner-link.jpg'));
+    process.env[ENV] = path.join(base, 'a');
+    expect(codeOf(() => readImage(path.join(base, 'a', 'inner-link.jpg')))).toBe('SYMLINK_REJECTED');
+  });
+});
+
+describe('writeOutputFile', () => {
+  let dir: string;
+
+  beforeAll(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-write-output-'));
+  });
+
+  afterAll(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('writes a new file, refuses an existing one with OUTPUT_EXISTS, and replaces it only with overwrite', () => {
+    const out = path.join(dir, 'out.jpg');
+    writeOutputFile(out, Buffer.from('first'), false);
+    expect(fs.readFileSync(out, 'utf8')).toBe('first');
+
+    let caught: LocalImageError | undefined;
+    try {
+      writeOutputFile(out, Buffer.from('second'), false);
+    } catch (err) {
+      caught = err as LocalImageError;
+    }
+    expect(caught?.code).toBe('OUTPUT_EXISTS');
+    expect(caught?.path).toBe(out);
+    expect(caught?.message).toContain('This call was already charged');
+    expect(fs.readFileSync(out, 'utf8')).toBe('first');
+
+    writeOutputFile(out, Buffer.from('third'), true);
+    expect(fs.readFileSync(out, 'utf8')).toBe('third');
+  });
+
+  test('refuses a symlink planted at outputPath after the pre-check, with or without overwrite', () => {
+    const target = path.join(dir, 'link-target.jpg');
+    const link = path.join(dir, 'planted-link.jpg');
+    fs.symlinkSync(target, link);
+    for (const overwrite of [false, true]) {
+      let caught: LocalImageError | undefined;
+      try {
+        writeOutputFile(link, Buffer.from('x'), overwrite);
+      } catch (err) {
+        caught = err as LocalImageError;
+      }
+      // Without overwrite, O_EXCL already refuses any existing name (EEXIST); with it, O_NOFOLLOW does.
+      expect(caught?.code).toBe(overwrite ? 'OUTPUT_IS_SYMLINK' : 'OUTPUT_EXISTS');
+      expect(fs.existsSync(target)).toBe(false);
     }
   });
 });

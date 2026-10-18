@@ -1,0 +1,8 @@
+server.schema.2025-12-11.json is an unmodified copy of the official MCP Registry
+server.json schema, used by tests/server-json.test.ts to validate server.json offline.
+
+Source: https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json
+Fetched: 2026-10-17
+
+To refresh, download the same URL over this file. If server.json moves to a newer
+schema, add the new file beside this one and point the test at it.

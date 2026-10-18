@@ -204,6 +204,391 @@ describe('enrich_photo error rendering', () => {
   });
 });
 
+describe('enrich_photo never overwrites', () => {
+  let tmpDir: string;
+  let inPath: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-enrich-guard-'));
+    inPath = path.join(tmpDir, 'in.jpg');
+    fs.writeFileSync(inPath, JPEG_BYTES);
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('refuses an existing outputPath without overwrite and spends nothing', async () => {
+    const outPath = path.join(tmpDir, 'existing.jpg');
+    fs.writeFileSync(outPath, Buffer.from('keep me'));
+    const client = makeMockClient();
+    const handler = captureHandler(client);
+    const result = await handler({ imagePath: inPath, outputPath: outPath });
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text).error.code).toBe('OUTPUT_EXISTS');
+    expect(client.enrich).not.toHaveBeenCalled();
+    expect(fs.readFileSync(outPath, 'utf8')).toBe('keep me');
+  });
+
+  it('overwrites an existing outputPath when overwrite: true', async () => {
+    const outPath = path.join(tmpDir, 'existing.jpg');
+    fs.writeFileSync(outPath, Buffer.from('replace me'));
+    const client = makeMockClient();
+    const handler = captureHandler(client);
+    const result = await handler({ imagePath: inPath, outputPath: outPath, overwrite: true });
+    expect(result.isError).toBeFalsy();
+    expect(client.enrich).toHaveBeenCalledTimes(1);
+    expect(Buffer.compare(fs.readFileSync(outPath), ENRICHED_BYTES)).toBe(0);
+  });
+
+  it('refuses outputPath equal to imagePath even with overwrite: true', async () => {
+    const client = makeMockClient();
+    const handler = captureHandler(client);
+    const result = await handler({ imagePath: inPath, outputPath: inPath, overwrite: true });
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text).error.code).toBe('OUTPUT_IS_INPUT');
+    expect(client.enrich).not.toHaveBeenCalled();
+    expect(Buffer.compare(fs.readFileSync(inPath), JPEG_BYTES)).toBe(0);
+  });
+
+  it('refuses outputPath that is a symlink to imagePath', async () => {
+    const linkPath = path.join(tmpDir, 'link.jpg');
+    fs.symlinkSync(inPath, linkPath);
+    const client = makeMockClient();
+    const handler = captureHandler(client);
+    const result = await handler({ imagePath: inPath, outputPath: linkPath, overwrite: true });
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text).error.code).toBe('OUTPUT_IS_INPUT');
+    expect(client.enrich).not.toHaveBeenCalled();
+    expect(Buffer.compare(fs.readFileSync(inPath), JPEG_BYTES)).toBe(0);
+  });
+
+  it('refuses outputPath that reaches imagePath through a symlinked directory', async () => {
+    const linkDir = path.join(tmpDir, 'alias');
+    fs.symlinkSync(tmpDir, linkDir);
+    const client = makeMockClient();
+    const handler = captureHandler(client);
+    const result = await handler({
+      imagePath: inPath,
+      outputPath: path.join(linkDir, 'in.jpg'),
+      overwrite: true,
+    });
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text).error.code).toBe('OUTPUT_IS_INPUT');
+    expect(client.enrich).not.toHaveBeenCalled();
+  });
+
+  it('refuses outputPath that is a hard link to imagePath', async () => {
+    const hardPath = path.join(tmpDir, 'hard.jpg');
+    fs.linkSync(inPath, hardPath);
+    const client = makeMockClient();
+    const handler = captureHandler(client);
+    const result = await handler({ imagePath: inPath, outputPath: hardPath, overwrite: true });
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text).error.code).toBe('OUTPUT_IS_INPUT');
+    expect(client.enrich).not.toHaveBeenCalled();
+    expect(Buffer.compare(fs.readFileSync(inPath), JPEG_BYTES)).toBe(0);
+  });
+
+  it('refuses a file created at outputPath while enrich is in flight', async () => {
+    const outPath = path.join(tmpDir, 'racer.jpg');
+    const enrich = jest.fn().mockImplementation(async () => {
+      fs.writeFileSync(outPath, Buffer.from('arrived first'));
+      return FAKE_ENRICH_RESPONSE;
+    });
+    const client = makeMockClient({ enrich });
+    const handler = captureHandler(client);
+    const result = await handler({ imagePath: inPath, outputPath: outPath });
+    expect(enrich).toHaveBeenCalledTimes(1);
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text).error.code).toBe('OUTPUT_EXISTS');
+    expect(fs.readFileSync(outPath, 'utf8')).toBe('arrived first');
+  });
+
+  it('describes the never-overwrite guarantee and stays non-destructive', () => {
+    const server = new McpServer({ name: 'test', version: '0.0.1' });
+    const spy = jest.spyOn(server, 'registerTool');
+    registerEnrichPhoto(server, makeMockClient());
+    const config: any = spy.mock.calls.find((c) => c[0] === 'enrich_photo')![1];
+    expect(config.description.split('\n\n')[0]).toContain(
+      'Never overwrites an existing file unless you pass `overwrite: true`, and never writes over the input file.',
+    );
+    expect(config.annotations.destructiveHint).toBe(false);
+    expect(config.inputSchema.overwrite).toBeDefined();
+  });
+});
+
+describe('enrich_photo reports resolvedPath only for a path reached through a symlink', () => {
+  let base: string;
+
+  beforeEach(() => {
+    base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-enrich-link-')));
+    fs.mkdirSync(path.join(base, 'real'));
+    fs.writeFileSync(path.join(base, 'real', 'in.jpg'), JPEG_BYTES);
+    fs.symlinkSync(path.join(base, 'real'), path.join(base, 'linked'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+
+  it('adds resolvedPath to the savedTo response when the input folder is a symlink', async () => {
+    const handler = captureHandler(makeMockClient());
+    const result = await handler({ imagePath: path.join(base, 'linked', 'in.jpg'), outputPath: path.join(base, 'out.jpg') });
+    expect(result.isError).toBeFalsy();
+    expect(JSON.parse(result.content[0].text).resolvedPath).toBe(path.join(base, 'real', 'in.jpg'));
+  });
+
+  it('adds resolvedPath to the inline response too, and omits it for a plain path', async () => {
+    const handler = captureHandler(makeMockClient());
+    const linked = await handler({ imagePath: path.join(base, 'linked', 'in.jpg') });
+    expect(JSON.parse(linked.content[0].text).resolvedPath).toBe(path.join(base, 'real', 'in.jpg'));
+    const plain = await handler({ imagePath: path.join(base, 'real', 'in.jpg') });
+    expect(JSON.parse(plain.content[0].text).resolvedPath).toBeUndefined();
+  });
+});
+
+describe('enrich_photo honors PHOTOTOLOGY_MCP_ALLOWED_DIRS for outputPath', () => {
+  const ENV = 'PHOTOTOLOGY_MCP_ALLOWED_DIRS';
+  let base: string;
+  let savedEnv: string | undefined;
+
+  beforeEach(() => {
+    savedEnv = process.env[ENV];
+    base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-enrich-allowed-')));
+    fs.mkdirSync(path.join(base, 'in'));
+    fs.mkdirSync(path.join(base, 'other'));
+    fs.writeFileSync(path.join(base, 'in', 'photo.jpg'), JPEG_BYTES);
+    process.env[ENV] = path.join(base, 'in');
+  });
+
+  afterEach(() => {
+    if (savedEnv === undefined) delete process.env[ENV];
+    else process.env[ENV] = savedEnv;
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+
+  it('refuses an outputPath outside the allowed folders before spending credits', async () => {
+    const client = makeMockClient();
+    const handler = captureHandler(client);
+    const outPath = path.join(base, 'other', 'out.jpg');
+    const result = await handler({ imagePath: path.join(base, 'in', 'photo.jpg'), outputPath: outPath });
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text).error.code).toBe('PATH_OUTSIDE_ALLOWED_DIRS');
+    expect(client.enrich).not.toHaveBeenCalled();
+    expect(fs.existsSync(outPath)).toBe(false);
+  });
+
+  it('answers PATH_OUTSIDE_ALLOWED_DIRS for an outputPath outside the folders even when its directory does not exist', async () => {
+    const client = makeMockClient();
+    const handler = captureHandler(client);
+    const outPath = path.join(base, 'no-such-dir', 'out.jpg');
+    const result = await handler({ imagePath: path.join(base, 'in', 'photo.jpg'), outputPath: outPath });
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text).error.code).toBe('PATH_OUTSIDE_ALLOWED_DIRS');
+    expect(client.enrich).not.toHaveBeenCalled();
+  });
+
+  it('still answers FILE_NOT_FOUND for a missing directory inside the allowed folder', async () => {
+    const client = makeMockClient();
+    const handler = captureHandler(client);
+    const result = await handler({ imagePath: path.join(base, 'in', 'photo.jpg'), outputPath: path.join(base, 'in', 'nope', 'out.jpg') });
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text).error.code).toBe('FILE_NOT_FOUND');
+    expect(client.enrich).not.toHaveBeenCalled();
+  });
+
+  it('refuses <allowed>/link/../x.jpg when the link points outside, and writes nothing anywhere', async () => {
+    // The kernel resolves link/.. through the link's target, not lexically.
+    fs.mkdirSync(path.join(base, 'other', 'sub'));
+    fs.symlinkSync(path.join(base, 'other', 'sub'), path.join(base, 'in', 'link'));
+    const client = makeMockClient();
+    const handler = captureHandler(client);
+    const result = await handler({
+      imagePath: path.join(base, 'in', 'photo.jpg'),
+      outputPath: `${path.join(base, 'in', 'link')}/../x.jpg`,
+    });
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text).error.code).toBe('PATH_OUTSIDE_ALLOWED_DIRS');
+    expect(client.enrich).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(base, 'other', 'x.jpg'))).toBe(false);
+    expect(fs.existsSync(path.join(base, 'in', 'x.jpg'))).toBe(false);
+  });
+
+  it('writes through a link that stays inside, landing in the link target', async () => {
+    fs.mkdirSync(path.join(base, 'in', 'inner'));
+    fs.symlinkSync(path.join(base, 'in', 'inner'), path.join(base, 'in', 'innerlink'));
+    const client = makeMockClient();
+    const handler = captureHandler(client);
+    const result = await handler({
+      imagePath: path.join(base, 'in', 'photo.jpg'),
+      outputPath: path.join(base, 'in', 'innerlink', 'x.jpg'),
+    });
+    expect(result.isError).toBeFalsy();
+    expect(fs.existsSync(path.join(base, 'in', 'inner', 'x.jpg'))).toBe(true);
+  });
+
+  it.each([
+    ['an outside folder that exists', 'other'],
+    ['an outside folder that does not exist', 'missing'],
+    ['a real subfolder inside', 'in/sub'],
+  ])('refuses an outputPath with a .. segment through %s, writing nothing', async (_label, via) => {
+    fs.mkdirSync(path.join(base, 'in', 'sub'), { recursive: true });
+    const client = makeMockClient();
+    const handler = captureHandler(client);
+    const outputPath = `${base}/${via}/../${via === 'in/sub' ? '' : 'in/'}y.jpg`;
+    const result = await handler({ imagePath: path.join(base, 'in', 'photo.jpg'), outputPath });
+    expect(result.isError).toBe(true);
+    const error = JSON.parse(result.content[0].text).error;
+    expect(error.code).toBe('PATH_OUTSIDE_ALLOWED_DIRS');
+    expect(error.message).toContain(outputPath);
+    expect(client.enrich).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(base, 'in', 'y.jpg'))).toBe(false);
+  });
+
+  it.each(['other', 'missing'])('refuses an imagePath with a .. segment through %s, reading nothing', async (via) => {
+    const client = makeMockClient();
+    const handler = captureHandler(client);
+    const result = await handler({ imagePath: `${base}/${via}/../in/photo.jpg` });
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text).error.code).toBe('PATH_OUTSIDE_ALLOWED_DIRS');
+    expect(client.enrich).not.toHaveBeenCalled();
+  });
+
+  it.each(['.'])('refuses an outputPath whose last part is %s with INVALID_OUTPUT_PATH', async (last) => {
+    const client = makeMockClient();
+    const handler = captureHandler(client);
+    const result = await handler({
+      imagePath: path.join(base, 'in', 'photo.jpg'),
+      outputPath: `${path.join(base, 'in')}/${last}`,
+    });
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text).error.code).toBe('INVALID_OUTPUT_PATH');
+    expect(client.enrich).not.toHaveBeenCalled();
+  });
+
+  it('refuses an outputPath ending in a separator with INVALID_OUTPUT_PATH', async () => {
+    const client = makeMockClient();
+    const handler = captureHandler(client);
+    const result = await handler({ imagePath: path.join(base, 'in', 'photo.jpg'), outputPath: `${path.join(base, 'in', 'x.jpg')}/` });
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text).error.code).toBe('INVALID_OUTPUT_PATH');
+  });
+
+  it('writes an outputPath inside the allowed folder', async () => {
+    const client = makeMockClient();
+    const handler = captureHandler(client);
+    const outPath = path.join(base, 'in', 'out.jpg');
+    const result = await handler({ imagePath: path.join(base, 'in', 'photo.jpg'), outputPath: outPath });
+    expect(result.isError).toBeFalsy();
+    expect(client.enrich).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(result.content[0].text).savedTo).toBe(outPath);
+    expect(fs.existsSync(outPath)).toBe(true);
+  });
+});
+
+describe('enrich_photo never writes through a symlink at outputPath', () => {
+  const ENV = 'PHOTOTOLOGY_MCP_ALLOWED_DIRS';
+  let base: string;
+  let savedEnv: string | undefined;
+
+  beforeEach(() => {
+    savedEnv = process.env[ENV];
+    base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-enrich-outlink-')));
+    fs.mkdirSync(path.join(base, 'in'));
+    fs.mkdirSync(path.join(base, 'outside'));
+    fs.writeFileSync(path.join(base, 'in', 'photo.jpg'), JPEG_BYTES);
+    process.env[ENV] = path.join(base, 'in');
+  });
+
+  afterEach(() => {
+    if (savedEnv === undefined) delete process.env[ENV];
+    else process.env[ENV] = savedEnv;
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+
+  it('refuses a dangling symlink at outputPath even with overwrite: true and creates nothing at its target', async () => {
+    const target = path.join(base, 'outside', 'planted.jpg');
+    const linkPath = path.join(base, 'in', 'out.jpg');
+    fs.symlinkSync(target, linkPath);
+    const client = makeMockClient();
+    const handler = captureHandler(client);
+    const result = await handler({ imagePath: path.join(base, 'in', 'photo.jpg'), outputPath: linkPath, overwrite: true });
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text).error.code).toBe('OUTPUT_IS_SYMLINK');
+    expect(client.enrich).not.toHaveBeenCalled();
+    expect(fs.existsSync(target)).toBe(false);
+  });
+
+  it('refuses a symlink to a regular file at outputPath even with overwrite: true and leaves the file alone', async () => {
+    const target = path.join(base, 'outside', 'victim.jpg');
+    fs.writeFileSync(target, Buffer.from('keep me'));
+    const linkPath = path.join(base, 'in', 'out.jpg');
+    fs.symlinkSync(target, linkPath);
+    const client = makeMockClient();
+    const handler = captureHandler(client);
+    const result = await handler({ imagePath: path.join(base, 'in', 'photo.jpg'), outputPath: linkPath, overwrite: true });
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text).error.code).toBe('OUTPUT_IS_SYMLINK');
+    expect(client.enrich).not.toHaveBeenCalled();
+    expect(fs.readFileSync(target, 'utf8')).toBe('keep me');
+  });
+});
+
+describe('enrich_photo copy describes a new file, never the original', () => {
+  it('says nowhere that the photo is written in place or back into its own file', () => {
+    const server = new McpServer({ name: 'test', version: '0.0.1' });
+    const spy = jest.spyOn(server, 'registerTool');
+    registerEnrichPhoto(server, makeMockClient());
+    const config = spy.mock.calls.find((c) => c[0] === 'enrich_photo')![1] as any;
+    const text = [
+      config.title,
+      config.description,
+      ...Object.values(config.inputSchema).map((s: any) => s.description ?? ''),
+    ].join('\n');
+    expect(text).not.toMatch(/in-place|in place|into the photo file|back into the image file|back to disk/i);
+    expect(config.description).toMatch(/original is never written/i);
+  });
+});
+
+describe('enrich_photo without an allow-list still resolves ..', () => {
+  const ENV = 'PHOTOTOLOGY_MCP_ALLOWED_DIRS';
+  let base: string;
+  let savedEnv: string | undefined;
+
+  beforeEach(() => {
+    savedEnv = process.env[ENV];
+    delete process.env[ENV];
+    base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-enrich-dotdot-')));
+    fs.mkdirSync(path.join(base, 'in', 'sub'), { recursive: true });
+    fs.writeFileSync(path.join(base, 'in', 'photo.jpg'), JPEG_BYTES);
+  });
+
+  afterEach(() => {
+    if (savedEnv === undefined) delete process.env[ENV];
+    else process.env[ENV] = savedEnv;
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+
+  it('reads and writes through a .. after a real subfolder', async () => {
+    const client = makeMockClient();
+    const handler = captureHandler(client);
+    const result = await handler({
+      imagePath: `${base}/in/sub/../photo.jpg`,
+      outputPath: `${base}/in/sub/../y.jpg`,
+    });
+    expect(result.isError).toBeFalsy();
+    expect(fs.existsSync(path.join(base, 'in', 'y.jpg'))).toBe(true);
+  });
+
+  it('a last part of .. is still INVALID_OUTPUT_PATH', async () => {
+    const client = makeMockClient();
+    const handler = captureHandler(client);
+    const result = await handler({ imagePath: path.join(base, 'in', 'photo.jpg'), outputPath: `${base}/in/..` });
+    expect(JSON.parse(result.content[0].text).error.code).toBe('INVALID_OUTPUT_PATH');
+  });
+});
+
 // A real JPEG, so the preview path can decode the enriched bytes.
 let REAL_JPEG: Buffer;
 beforeAll(async () => {

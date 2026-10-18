@@ -64,6 +64,11 @@ describe('buildServerInstructions — pricing v1', () => {
     expect(instructions).not.toMatch(/5,000/);
   });
 
+  it('quotes the real opening of the out-of-credits error text (see tests/errors.test.ts)', () => {
+    expect(instructions).toContain('starts "OUT_OF_CREDITS:"');
+    expect(instructions).not.toContain('"Out of credits."');
+  });
+
   it('does NOT mention 1,000 credits per month', () => {
     expect(instructions).not.toMatch(/1,000 credits per month/i);
   });

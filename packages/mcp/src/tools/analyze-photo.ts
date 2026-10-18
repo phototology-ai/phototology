@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { type PhototologyClient, LENS_FIELDS, PRESET_IDS, type LensId } from '@phototology/sdk';
 import { renderToolError } from './errors';
-import { readImage, resolvePath, validateBase64, LocalImageError } from '../lib/local-image';
+import { readLocalImage, resolvePath, validateBase64, LocalImageError } from '../lib/local-image';
 import { toAnalyzeEnvelope, photoResourceLink, analyzedPhotoSha256 } from '../lib/envelope';
 import { AnalyzePhotoOutputSchema } from '../schemas';
 
@@ -57,6 +57,7 @@ export function registerAnalyzePhoto(server: McpServer, client: PhototologyClien
   s.registerTool(
     'analyze_photo',
     {
+      title: 'Analyze a photo',
       description: [
         'Analyze a photo with AI vision and return structured facts. Use when the user has an image URL and needs information about it (dates, people, location, condition, entities, etc.).',
         '',
@@ -104,10 +105,12 @@ export function registerAnalyzePhoto(server: McpServer, client: PhototologyClien
 
         // Resolve local input modes to base64. imageUrl is forwarded as-is.
         let resolvedBase64: string | undefined;
+        // Set only when a symlinked folder led somewhere else, so the caller sees what was read.
+        let resolvedPath: string | undefined;
         if (imagePath) {
-          const abs = resolvePath(imagePath);
-          const bytes = readImage(abs);
-          resolvedBase64 = bytes.toString('base64');
+          const local = readLocalImage(resolvePath(imagePath));
+          resolvedBase64 = local.bytes.toString('base64');
+          if (local.viaSymlink) resolvedPath = local.resolvedPath;
         } else if (imageBase64) {
           validateBase64(imageBase64);
           resolvedBase64 = imageBase64;
@@ -127,7 +130,8 @@ export function registerAnalyzePhoto(server: McpServer, client: PhototologyClien
           ...(refresh !== undefined ? { refresh } : {}),
         });
         const sha256 = analyzedPhotoSha256(result, resolvedBase64);
-        const envelope = toAnalyzeEnvelope(result, sha256);
+        const base = toAnalyzeEnvelope(result, sha256);
+        const envelope = resolvedPath ? { ...base, resolvedPath } : base;
         return {
           content: [
             { type: 'text' as const, text: JSON.stringify(envelope, null, 2) },

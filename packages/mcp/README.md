@@ -70,7 +70,7 @@ Stated plainly, so an agent can route correctly:
 | `analyze_photo` | Run AI vision against ONE image and return structured facts per lens. Accepts `imageUrl`, `imageBase64`, or `imagePath`. | 1 credit per lens. Re-running cached lenses on the same photo: 0. |
 | `analyze_batch` | Analyze 1 to 200 photos in a single call. Internally lookup-first per URL (20 in flight), then analyzes cache-miss photos with bounded concurrency (5 in flight, matching the API per-user cap). For thousands, loop in slices of 200. Accepts `imageUrls`, `imagesBase64`, or `imagePaths` (with glob support). Returns `{ summary, results }`; pass `dryRun: true` to see what a batch would cost without spending. | 1 credit per lens per non-cached photo. Cache hits free. A dry run is free. |
 | `lookup_photo` | Check if a single photo has already been analyzed; return all cached lens results. Accepts `sha256`, `pHash`, `imageUrl`, `imageBase64`, or `imagePath` (cascade). | Free. |
-| `enrich_photo` | Write cached lens output into a photo's EXIF/IPTC/XMP metadata so the structured intelligence travels with the file. Accepts `imageUrl`, `imageBase64`, or `imagePath` plus an optional `outputPath` to save the enriched bytes back to disk. Returns a small JPEG preview of the enriched photo. | 5 credits per call. |
+| `enrich_photo` | Write cached lens output into a photo's EXIF/IPTC/XMP metadata so the structured intelligence travels with the file. Accepts `imageUrl`, `imageBase64`, or `imagePath` plus an optional `outputPath` that saves the enriched copy as a new file (the original is never written; an existing file is refused unless `overwrite: true`). Returns a small JPEG preview of the enriched photo. | 5 credits per call. |
 | `list_lenses` | Enumerate available lenses and stacks with descriptions and output fields. | Free. |
 | `get_credits` | Read the account credit balance: `total` spendable credits and its dollar value `usd`, plus `reserved` in-flight holds when there are any. | Free. |
 | `purchase_credits` | Return a wallet deep-link the user can open to buy more credits. | Free. |
@@ -307,14 +307,26 @@ Phototology remembers every photo per account, keyed by perceptual hash. The sec
 | `PHOTOTOLOGY_API_KEY` | Yes | Your API key (`pt_live_...` or `pt_test_...`). |
 | `PHOTOTOLOGY_BASE_URL` | No | API base URL. Default: `https://api.phototology.com`. |
 | `PHOTOTOLOGY_MCP_NO_TELEMETRY` | No | Set to `1` to disable anonymous client-discovery telemetry (see below). |
+| `DO_NOT_TRACK` | No | Set to `1` to disable telemetry. Same effect as `PHOTOTOLOGY_MCP_NO_TELEMETRY`; it follows the cross-tool convention many CLIs honor. |
+| `PHOTOTOLOGY_MCP_ALLOWED_DIRS` | No | Folders the server may read photos from and write enriched copies to, separated by `:` (`;` on Windows), for example `/Users/me/Pictures:/Volumes/Archive`. Unset means any local path. Paths are checked after symlinks are resolved, so a link inside an allowed folder that points elsewhere is refused with `PATH_OUTSIDE_ALLOWED_DIRS`. |
 
 Keys starting with `pt_test_` use the test sandbox (instant responses, zero cost, golden fixtures).
 
 ### Anonymous telemetry
 
-When the MCP server completes the initialize handshake with your editor, it reports the editor's stated name + version (e.g. `claude-desktop 0.7.0`, `cursor 0.42`) plus the MCP package version to `api.phototology.com` so we can see which clients are connecting. This is the same domain your tool calls already go through. No third-party SDK is bundled, and your API key is the only credential used. No image content, file paths, prompts, or tool inputs/outputs are sent.
+When the MCP server completes the initialize handshake with your editor, it reports the editor's stated name + version (e.g. `claude-desktop 0.7.0`, `cursor 0.42`) plus the MCP package version to `api.phototology.com` so we can see which clients are connecting. After each tool call it sends one event with the tool name, whether the call succeeded, how long it took, an error code if it failed, and counts: credits charged, lenses run, photos submitted, cache hits, and whether an `analyze_photo` call was a full cache hit. This is the same domain your tool calls already go through. No third-party SDK is bundled, and your API key is the only credential used. No image content, file paths, prompts, conversation text, or tool inputs/outputs are sent.
 
-Set `PHOTOTOLOGY_MCP_NO_TELEMETRY=1` in the same env block as `PHOTOTOLOGY_API_KEY` to disable.
+Set `PHOTOTOLOGY_MCP_NO_TELEMETRY=1` or `DO_NOT_TRACK=1` in the same env block as `PHOTOTOLOGY_API_KEY` to disable. Telemetry is also off whenever the process runs with `NODE_ENV=test`.
+
+## Security model
+
+The full policy is in [SECURITY.md](SECURITY.md). In short:
+
+- **What it reads.** Only the files you name, by absolute path (or `~/` path). When `PHOTOTOLOGY_MCP_ALLOWED_DIRS` is set, only files inside those folders, checked after symlinks are resolved. `enrich_photo` writes only to the `outputPath` you pass, and inside those folders when they are set.
+- **What it sends.** Image bytes (or the URL or hash you passed) to `api.phototology.com`, plus the telemetry payload described under [Anonymous telemetry](#anonymous-telemetry).
+- **What it never sends.** File paths, tool inputs or outputs in telemetry, or your conversation text.
+- **What is not a boundary.** Tool annotations such as `readOnlyHint` are hints to your editor, not enforcement. The server itself runs with your user's permissions and is not a sandbox. Keep your editor's tool confirmations on.
+- **Reporting a vulnerability.** Email security@phototology.com. Please do not open a public issue.
 
 ## FAQ
 
