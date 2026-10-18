@@ -28,6 +28,9 @@
 - **`SDK_VERSION` constant bumped to `2.0.0`** (`src/client.ts`), matching `package.json`, so the `User-Agent` header reports the right version.
 - **Rate-limit waits are capped at `maxRateLimitWaitMs`** (new option, default 10,000 ms). Before, a 200 that reported `x-ratelimit-remaining: 0` made the next call sleep until `x-ratelimit-reset`, which on a daily window was up to 24 hours, and a 429 waited out its `Retry-After` up to the 90 s budget. Now a wait longer than the cap is not slept: the call throws `RateLimitedError` at once, without sending the request, with `retryAfterSeconds` and a message that names the limit and when it resets. A 429 on an exhausted window uses `x-ratelimit-reset` when that is later than `Retry-After`. Shorter waits are still slept and retried as before. The wait counts against `maxElapsedMs`: a wait that would leave the request 1 s or less of it throws instead (the message names `maxElapsedMs`), and the request gets only the time left. The plain retry backoff is also clamped to `maxElapsedMs` now (one backoff could sleep past it).
 
+### Docs
+- **Receipt status.** The README says that only `pt_test_` keys receive receipts today (until the live signing key is published, a `pt_live_` key gets `receipts: []` with `RECEIPT_UNAVAILABLE` on a fresh analyze and `RECEIPT_NONE_STORED` on a registry hit), lists the receipt warning codes, and says that `enrich()`'s `credentials` describes the input photo.
+
 ## 1.3.0 (2026-06-02)
 
 ### Changed

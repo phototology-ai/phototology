@@ -90,6 +90,22 @@ Stated plainly, so an agent can route correctly:
 
 Analyze and lookup results carry `receipts`: signed records of which lenses ran on which photo, with which model, and when. Results also carry `credentials` when the API read the photo's content credential. To check a receipt, use `verifyReceiptSignature` (offline) or `client.verifyReceipt` (server-side, free) from [`@phototology/sdk`](https://www.npmjs.com/package/@phototology/sdk).
 
+**Who gets receipts today.** Only `pt_test_` keys receive receipts right now. Those are signed by the published sandbox key, which never vouches for live data: they check your integration, not a photo. Production has no published live signing key yet, so until it is, a `pt_live_` key receives `receipts: []` with the warning `RECEIPT_UNAVAILABLE` on a fresh analyze, and with `RECEIPT_NONE_STORED` on a result served from the registry (no live receipt has been stored yet). The analysis and its billing are unaffected.
+
+When `receipts` is empty on an analyze result, `warnings` names why (a fresh analyze whose lenses produced no output issues neither a receipt nor a warning):
+
+| Code | Meaning |
+|---|---|
+| `RECEIPT_UNAVAILABLE` | No receipt could be signed for this call: no live signing key is configured and published, or signing failed or timed out. The analysis itself is complete. |
+| `RECEIPT_NONE_STORED` | The result came from the registry, and no stored receipt covers the lenses asked for (the analysis predates receipts or was issued without one). |
+| `RECEIPT_NOT_ISSUED_MULTI_IMAGE` | The call sent more than one image; receipts are issued for single-image calls only. |
+| `RECEIPT_NOT_ISSUED_BESPOKE` | The call used a custom extraction schema; those calls get no receipt. |
+| `RECEIPT_NOT_ISSUED_NO_ACCOUNT` | The key is not linked to an account, so there is no registry record for a receipt to name. |
+
+`analyze_photo` results and analyzed `analyze_batch` rows carry these warnings. `lookup_photo` and batch rows served from the registry carry the photo's stored receipts and no receipt warning: an empty list there means no stored receipt covers that photo.
+
+**Credentials on `enrich_photo`.** The `credentials` block on an enrich result describes the input photo, as read before the write. With `breakCredentials: true`, the written copy no longer carries a valid content credential, even when `credentials` reports one on the input.
+
 ## Pricing
 
 - **1 credit = $0.01 = one lens run on one photo.** Stack five lenses on a photo = 5 credits = $0.05.

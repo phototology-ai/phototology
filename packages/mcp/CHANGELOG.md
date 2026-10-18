@@ -16,7 +16,7 @@ Typed results. Every tool now declares an `outputSchema` and returns `structured
 - **`resource_link` blocks.** `analyze_photo`, `analyze_batch` and `lookup_photo` link each named photo to its `phototology://photo/{sha256}` resource, and say the same in a `resource` field.
 - **`enrich_photo` preview.** When the API returns enriched bytes, the result carries an `image` content block: a JPEG of the enriched photo with its longest edge at most 1024 px (never enlarged), quality 80, EXIF rotation applied. Full-size bytes still go to `outputPath` or `imageBase64` as before. Adds `sharp` as a dependency, loaded only when a preview is made: if its native binary cannot load, the tools still start and `enrich_photo` returns its result with a `warnings` entry instead of the preview.
 - **`enrich_photo` keeps content credentials.** When the photo carries a valid or trusted content credential, the API leaves the photo untouched and returns the analysis as an XMP sidecar (`mode: 'sidecar'`, with `reason`). With `imagePath` the sidecar is saved beside the original as `<imagePath>.xmp` and named in `sidecarSavedTo`, under the same rules as `outputPath` (an existing `.xmp` is left alone unless `overwrite: true`; the call then returns an error whose JSON first line still carries the packet in `sidecar.xmp`, with `sidecarPath`); otherwise it comes back in `sidecar.xmp`. `breakCredentials: true` writes the copy anyway; when that breaks a credential, the result warns `CREDENTIAL_INVALIDATED`. A `note` says in plain words why the photo was left untouched, or what a copy lost. Billed the same either way.
-- **Receipts and content credentials on results.** `analyze_photo`, `analyze_batch` rows and `lookup_photo` carry `receipts` (an empty list when the API sends none) and `credentials` when the API includes them. A batch row served from the registry without a fresh analyze carries an empty `receipts` list; `lookup_photo` or the `phototology://photo/{sha256}` resource returns the stored ones. Verify a receipt with `verifyReceiptSignature` or `verifyReceipt` from `@phototology/sdk`.
+- **Receipts and content credentials on results.** `analyze_photo`, `analyze_batch` rows and `lookup_photo` carry `receipts` (an empty list when the API sends none) and `credentials` when the API includes them. A batch row served from the registry carries the stored `receipts` and `credentials` its lookup returned. Verify a receipt with `verifyReceiptSignature` or `verifyReceipt` from `@phototology/sdk`.
 
 ### Changed
 - Bundles **`@phototology/sdk@2.0.0`** (receipts, content credentials, image identity fields, `getPhoto`).
@@ -47,6 +47,12 @@ Trust patch: local file reads and writes are bounded, and an output never replac
 - **`server.json`.** Registry metadata for the MCP Registry under the name `com.phototology/mcp`, listing the npm package, its stdio transport and its environment variables.
 - **`SECURITY.md`.** Says what the server reads, what it sends, what it never sends, what is not a security boundary, and how to report a vulnerability.
 - **Telemetry stays off in tests and under `DO_NOT_TRACK`.** No event is sent when `NODE_ENV=test` (a test opts back in with `PHOTOTOLOGY_MCP_TELEMETRY_IN_TESTS`), or when `DO_NOT_TRACK` or `PHOTOTOLOGY_MCP_NO_TELEMETRY` is `1`, `true`, `yes` or `on`.
+
+### Docs
+- **Receipt status.** The README, the server instructions and the `analyze_photo`, `analyze_batch`, `lookup_photo` and `enrich_photo` descriptions say that only `pt_test_` keys receive receipts today (until the live signing key is published, a `pt_live_` key gets `receipts: []` with `RECEIPT_UNAVAILABLE` on a fresh analyze and `RECEIPT_NONE_STORED` on a registry hit), list the receipt warning codes, and say that an enrich result's `credentials` describes the input photo.
+
+### Fixed
+- **Batch registry rows keep their receipts.** A batch row served from the registry used to carry `receipts: []` even when the lookup that served it returned stored receipts. It now carries those receipts, and `credentials` when the lookup sent it. Fixed in 2.0.0 before publishing.
 
 ## [1.3.0] - 2026-06-02
 

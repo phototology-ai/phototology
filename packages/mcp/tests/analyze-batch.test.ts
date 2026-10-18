@@ -803,6 +803,40 @@ describe('analyze_batch typed result', () => {
     expect(AnalyzeBatchOutputSchema.safeParse(sc).success).toBe(true);
   });
 
+  it('a registry row carries the receipts and credentials the lookup returned for that photo', async () => {
+    const url = 'https://example.com/known.jpg';
+    const receipts = [
+      { payload: { analysis: { lenses: ['dating'] }, livemode: true }, signature: 'sig-new', timestamp: { status: 'granted' } },
+      { payload: { analysis: { lenses: ['people'] }, livemode: true }, signature: 'sig-old', timestamp: { status: 'granted' } },
+    ];
+    const credentials = { status: 'none', aiGenerated: null, signer: null, trustList: null, note: 'n' };
+    const hit = lookupHit(shaOf(url), { dating: { estimatedDate: { year: 1971 } } });
+    Object.assign(hit.results[shaOf(url)], { receipts, credentials });
+    mockLookup.mockResolvedValue(hit);
+    const cb = captureToolCallback(new McpServer({ name: 'test', version: '0.0.1' }), 'analyze_batch');
+
+    const result = await cb({ imageUrls: [url], lenses: ['dating'] });
+
+    const sc: any = result.structuredContent;
+    expect(mockAnalyze).not.toHaveBeenCalled();
+    expect(sc.results[0].cacheHit).toBe(true);
+    expect(sc.results[0].receipts).toEqual(receipts);
+    expect(sc.results[0].credentials).toEqual(credentials);
+    expect(AnalyzeBatchOutputSchema.safeParse(sc).success).toBe(true);
+  });
+
+  it('a registry row whose lookup sent no receipts carries an empty list and no credentials', async () => {
+    const url = 'https://example.com/old.jpg';
+    mockLookup.mockResolvedValue(lookupHit(shaOf(url), { dating: { estimatedDate: { year: 1971 } } }));
+    const cb = captureToolCallback(new McpServer({ name: 'test', version: '0.0.1' }), 'analyze_batch');
+
+    const result = await cb({ imageUrls: [url], lenses: ['dating'] });
+
+    const row: any = (result.structuredContent as any).results[0];
+    expect(row.receipts).toEqual([]);
+    expect(row).not.toHaveProperty('credentials');
+  });
+
   it('expands a stack through the free lens catalog to price it', async () => {
     mockModules.mockResolvedValue({
       modules: [],

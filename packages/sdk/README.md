@@ -248,9 +248,25 @@ result.meta.creditsCharged; // 5
 
 When the photo carries a valid or trusted content credential, `enrich()` leaves the image untouched and returns `mode: 'sidecar'` with the metadata in `sidecar.xmp` and the reason in `reason`, because writing into the file would break the credential. Pass `preserveCredentials: false` to write into the file anyway; the response then warns `CREDENTIAL_INVALIDATED`. Billed the same either way.
 
+`result.credentials` describes the input photo, as read before the write. With `preserveCredentials: false`, the enriched bytes no longer carry a valid content credential, even when `credentials` reports one on the input.
+
 ### Receipts: `client.getPhoto`, `client.verifyReceipt`, `verifyReceiptSignature`
 
 Analyze results carry `receipts`: signed records of which lenses ran on which photo, with which model, and when. Lookups and `getPhoto` return the stored receipts for a photo, newest first, at most 10.
+
+**Who gets receipts today.** Only `pt_test_` keys receive receipts right now. Those are signed by the published sandbox key, which never vouches for live data: they check your integration, not a photo. Production has no published live signing key yet, so until it is, a `pt_live_` key receives `receipts: []` with the warning `RECEIPT_UNAVAILABLE` on a fresh analyze, and with `RECEIPT_NONE_STORED` on a result served from the registry (no live receipt has been stored yet). The analysis and its billing are unaffected.
+
+When `receipts` is empty on an analyze result, `warnings` names why (a fresh analyze whose lenses produced no output issues neither a receipt nor a warning):
+
+| Code | Meaning |
+|---|---|
+| `RECEIPT_UNAVAILABLE` | No receipt could be signed for this call: no live signing key is configured and published, or signing failed or timed out. The analysis itself is complete. |
+| `RECEIPT_NONE_STORED` | The result came from the registry, and no stored receipt covers the lenses asked for (the analysis predates receipts or was issued without one). |
+| `RECEIPT_NOT_ISSUED_MULTI_IMAGE` | The call sent more than one image; receipts are issued for single-image calls only. |
+| `RECEIPT_NOT_ISSUED_BESPOKE` | The call used a custom extraction schema; those calls get no receipt. |
+| `RECEIPT_NOT_ISSUED_NO_ACCOUNT` | The key is not linked to an account, so there is no registry record for a receipt to name. |
+
+Analyze responses carry these in `warnings`. Lookups and `getPhoto` carry no receipt warning: an empty list there means no stored receipt covers that photo.
 
 A receipt is `{ payload, signature, timestamp }`. `signature` is a detached compact JWS (ES256) over the canonical JSON (RFC 8785) of `payload`. `timestamp` is an RFC 3161 token over the SHA-256 of the `signature` string, from the authority named in `timestamp.tsa`.
 

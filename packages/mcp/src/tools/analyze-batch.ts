@@ -77,6 +77,10 @@ interface Known {
   matchType: 'exact' | 'pixels' | 'pdq' | 'fuzzy' | 'none';
   /** Registry record for a hit; absent on 'none'. */
   photo?: NonNullable<LookupResult['photo']>;
+  /** The matched photo's stored receipts, as the lookup returned them. */
+  receipts?: LookupResult['receipts'];
+  /** The lookup's content credentials report, when it sent one. */
+  credentials?: LookupResult['credentials'];
 }
 
 /**
@@ -85,13 +89,14 @@ interface Known {
  * by live analyses (the `pt_test_` sandbox never writes one), so the output is
  * real model output and `livemode` is true. `matchType` says how the lookup
  * matched: on anything but 'exact', `photo` is the matched record, not the input.
+ * `receipts` and `credentials` are the ones the lookup returned for that photo.
  */
 function registryRow(
   input: string,
-  matchType: Known['matchType'],
-  photo: NonNullable<LookupResult['photo']>,
+  known: Known & { photo: NonNullable<LookupResult['photo']> },
   lenses: string[],
 ): PhotoRow {
+  const { matchType, photo } = known;
   const output: Record<string, unknown> = {};
   for (const lens of lenses) Object.assign(output, photo.lenses[lens]?.output ?? {});
   const creditsSaved = billableLenses(lenses).length;
@@ -108,7 +113,9 @@ function registryRow(
       modulesUsed: lenses,
     },
     cacheHit: true,
-    receipts: [],
+    receipts: Array.isArray(known.receipts) ? [...known.receipts] : [],
+    // Spread: the SDK interface has no index signature, the open envelope object does.
+    ...(known.credentials !== undefined ? { credentials: { ...known.credentials } } : {}),
     resource: photoResourceUri(photo.sha256),
     livemode: true,
   };
@@ -190,7 +197,7 @@ export function registerAnalyzeBatch(server: McpServer, client: PhototologyClien
         '',
         'Pass `dryRun: true` to see which photos the registry already knows and what the rest would cost, without spending. A dry run also looks up local-file and base64 inputs, and each of its results is `{ input, matchType, cachedLenses, missingLenses, resource? }`. With `refresh: true` a dry run still looks every photo up, so each row keeps its real `matchType` and lens lists, but the estimate prices every lens on every photo, because a refresh re-runs them all.',
         '',
-        'Returns `{ summary, results }`. `summary` holds `photos`, `cacheHits`, `analyzed`, `errors`, `creditsCharged`, `creditsSaved`, `usd: { charged, saved }`, `estimate: { photos, cacheHits, creditsNeeded, usd }` and `warnings?`. When a `stack` cannot be priced because the lens catalog is unreachable, the batch still runs: `estimate` is null and `warnings` holds `ESTIMATE_UNAVAILABLE`. Each `results[i]` is the `analyze_photo` result for one photo plus `input`, or `{ input, error: { code, message } }` for a photo that failed. `input` is the URL for `imageUrls`, the file path for `imagePaths`, or `"base64[i]"` (where `i` is the array index) for `imagesBase64`. A row served from the registry also carries `matchType`; on anything but `exact`, its `photo` is the registry record that matched, not the submitted image. Each named photo also comes back as a resource link to its registry record (a `pt_test_` result for a URL has no name and no link).',
+        'Returns `{ summary, results }`. `summary` holds `photos`, `cacheHits`, `analyzed`, `errors`, `creditsCharged`, `creditsSaved`, `usd: { charged, saved }`, `estimate: { photos, cacheHits, creditsNeeded, usd }` and `warnings?`. When a `stack` cannot be priced because the lens catalog is unreachable, the batch still runs: `estimate` is null and `warnings` holds `ESTIMATE_UNAVAILABLE`. Each `results[i]` is the `analyze_photo` result for one photo plus `input`, or `{ input, error: { code, message } }` for a photo that failed. `input` is the URL for `imageUrls`, the file path for `imagePaths`, or `"base64[i]"` (where `i` is the array index) for `imagesBase64`. A row served from the registry also carries `matchType`; on anything but `exact`, its `photo` is the registry record that matched, not the submitted image. Each named photo also comes back as a resource link to its registry record (a `pt_test_` result for a URL has no name and no link). An analyzed row\'s `receipts` may be empty; its `warnings` then names why (`RECEIPT_UNAVAILABLE`, `RECEIPT_NONE_STORED`, or a `RECEIPT_NOT_ISSUED_*` code). A row served from the registry carries the stored receipts the lookup returned for that photo, with no receipt warning; an empty list there means no stored receipt covers it.',
         '',
         'Cost: 1 credit per billable lens per non-cached photo. A 100-photo batch with `lenses: ["dating"]` and 80% cache hit rate costs 20 credits ($0.20). Surface `summary.usd.charged` and `summary.usd.saved` to the user so the value of the registry is visible.',
         '',
@@ -326,7 +333,14 @@ export function registerAnalyzeBatch(server: McpServer, client: PhototologyClien
             try {
               const r = await client.lookup(input.kind === 'url' ? { images: [input.value] } : { imagesBase64: [input.value] });
               const first = Object.values(r.results ?? {})[0];
-              if (first) known[idx] = { matchType: first.matchType, ...(first.photo ? { photo: first.photo } : {}) };
+              if (first) {
+                known[idx] = {
+                  matchType: first.matchType,
+                  ...(first.photo ? { photo: first.photo } : {}),
+                  ...(first.receipts ? { receipts: first.receipts } : {}),
+                  ...(first.credentials ? { credentials: first.credentials } : {}),
+                };
+              }
             } catch {
               // A failed lookup is non-fatal: the photo is treated as unknown.
             }
@@ -378,7 +392,7 @@ export function registerAnalyzeBatch(server: McpServer, client: PhototologyClien
           for (const p of plans) {
             const photo = known[p.idx].photo;
             if (p.covered && photo && coverLenses) {
-              rows[p.idx] = registryRow(p.input.label, known[p.idx].matchType, photo, coverLenses);
+              rows[p.idx] = registryRow(p.input.label, { ...known[p.idx], photo }, coverLenses);
               shas[p.idx] = photo.sha256;
             }
           }
