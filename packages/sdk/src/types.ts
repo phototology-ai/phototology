@@ -173,6 +173,128 @@ export interface Fingerprint {
   iscc?: string;
 }
 
+/**
+ * What a receipt says about the photo it covers. `bytesSha256` is the
+ * registry key; the perceptual hashes let a verifier match re-encoded copies.
+ */
+export interface ReceiptSubject {
+  bytesSha256: string;
+  pixelsSha256?: string;
+  pHash: string;
+  dHash: string;
+  pdq?: { hash: string; quality: number };
+  iscc?: string;
+}
+
+/** One lens a receipt covers, with the SHA-256 of that lens's canonical output. */
+export interface ReceiptLens {
+  id: string;
+  version: string;
+  outputSha256: string;
+}
+
+/**
+ * Content Credentials report. Until credentials are read, the API returns
+ * `{ status: 'unread', note }`. `status` is a plain string so later states
+ * extend it without a breaking change.
+ */
+export interface CredentialsReport {
+  status: string;
+  note?: string;
+  [key: string]: unknown;
+}
+
+/**
+ * The signed part of a receipt. Its canonical JSON (RFC 8785) is the
+ * signing input, so every field here is part of the signed contract.
+ */
+export interface ReceiptPayload {
+  type: 'phototology.receipt';
+  version: 1;
+  id: string;
+  livemode: boolean;
+  issuer: 'https://phototology.com';
+  keyId: string;
+  subject: ReceiptSubject;
+  analysis: {
+    requestId: string;
+    lenses: ReceiptLens[];
+    provider: string;
+    model: string | null;
+    modelVersion: string | null;
+    outputSha256: string;
+    analyzedAt: string;
+  };
+  firstSeenAt: string;
+  credentials: CredentialsReport;
+  registry: { url: string };
+}
+
+/**
+ * RFC 3161 timestamp over the receipt signature. `tsa` names the timestamp
+ * authority that issued `token` (base64 DER TimeStampToken, the token alone,
+ * not the full TSA response). `time` is the token's own genTime.
+ */
+export interface ReceiptTimestamp {
+  status: 'ok' | 'pending' | 'unavailable';
+  tsa?: string;
+  token?: string;
+  time?: string;
+}
+
+/**
+ * A signed receipt for the lenses that ran fresh in one analyze call.
+ * `signature` is a detached compact JWS (`header..signature`, ES256) over
+ * the canonical JSON of `payload`. Check it offline with
+ * `verifyReceiptSignature`, or server-side with `client.verifyReceipt`.
+ */
+export interface Receipt {
+  payload: ReceiptPayload;
+  signature: string;
+  timestamp: ReceiptTimestamp;
+}
+
+/**
+ * A receipt-signing public key from the JWKS (EC P-256, ES256). The sandbox
+ * key carries `phototology.sandbox: true`. Declared here rather than reusing
+ * the DOM `JsonWebKey` so the SDK's types compile without the DOM lib.
+ */
+export interface ReceiptJwk {
+  kty?: string;
+  crv?: string;
+  x?: string;
+  y?: string;
+  kid?: string;
+  use?: string;
+  alg?: string;
+  'phototology.sandbox'?: boolean;
+}
+
+/** GET /.well-known/phototology-keys.json */
+export interface ReceiptJwks {
+  keys: ReceiptJwk[];
+}
+
+/**
+ * POST /v1/verify response. `valid` is true when the signature is valid
+ * and the timestamp is valid, pending or unavailable. The timestamp is
+ * `invalid` when `timestamp.time` differs from the token's own time.
+ */
+export interface VerifyResponse {
+  valid: boolean;
+  livemode: boolean;
+  keyId: string;
+  signature: 'valid' | 'invalid' | 'unknown_key';
+  timestamp: 'valid' | 'invalid' | 'pending' | 'unavailable' | 'untrusted_root';
+  /**
+   * The time inside the timestamp token when the timestamp is valid, else
+   * null. Absent from servers deployed before this field existed.
+   */
+  timestampedAt?: string | null;
+  issuedAt: string;
+  checkedAt: string;
+}
+
 /** Base response shape shared by both output schemas. */
 interface AnalyzeResponseBase {
   id: string;
@@ -186,6 +308,15 @@ interface AnalyzeResponseBase {
   meta: AnalyzeMeta;
   embedding?: number[];
   fingerprint?: Fingerprint;
+  /**
+   * Signed receipts: the new receipt for lenses that ran in this call first,
+   * then stored receipts covering cached lenses. Empty, with a `RECEIPT_*`
+   * warning, when none was issued. Absent on a moderation-block response,
+   * which carries no analysis.
+   */
+  receipts?: Receipt[];
+  /** Content Credentials report for the submitted photo. */
+  credentials?: CredentialsReport;
 }
 
 /** Response when outputSchema is 'photo'. */
@@ -403,6 +534,27 @@ export interface LookupResult {
     pHash: string;
     dHash: string;
   };
+  /**
+   * Stored receipts for the matched photo, newest first, at most 10. `[]`
+   * on `matchType: 'none'` and for photos analyzed before receipts existed.
+   * Optional for API versions that predate receipts.
+   */
+  receipts?: Receipt[];
+  /** Content Credentials report, when the API includes one. */
+  credentials?: CredentialsReport;
+}
+
+/**
+ * GET /v2/photos/{sha256}: this account's registry record for one photo,
+ * its stored receipts (newest first, at most 10) and the credentials report.
+ */
+export interface PhotoResponse {
+  object: 'photo';
+  photo: PhotoRecord;
+  receipts: Receipt[];
+  credentials: CredentialsReport;
+  firstSeenAt: string;
+  lastAnalyzedAt: string;
 }
 
 /** Lookup response from the API. */

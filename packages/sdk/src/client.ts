@@ -1,5 +1,5 @@
 import { fetchWithRetry } from './retry';
-import { PhototologyError } from './errors';
+import { PhototologyError, ValidationError } from './errors';
 import type {
   AnalyzeRequest,
   AnalyzeResponse,
@@ -8,8 +8,12 @@ import type {
   LookupRequest,
   LookupResponse,
   ModulesResponse,
+  PhotoResponse,
   PhototologyClientConfig,
+  Receipt,
+  ReceiptJwks,
   UsageResponse,
+  VerifyResponse,
 } from './types';
 
 const DEFAULT_BASE_URL = 'https://api.phototology.com';
@@ -29,6 +33,7 @@ const DEFAULT_MAX_ELAPSED_MS = 90_000;
 // runtimes behave identically.
 const SDK_VERSION = '1.3.0';
 const DEFAULT_USER_AGENT = `@phototology/sdk/${SDK_VERSION}`;
+const SHA256_HEX = /^[0-9a-fA-F]{64}$/;
 
 /**
  * Phototology API client.
@@ -158,11 +163,63 @@ export class PhototologyClient {
     return safeJson<LookupResponse>(response);
   }
 
-  /** Send an authenticated request with retry and pre-emptive rate limit backoff. */
+  /**
+   * This account's registry record for one photo, with its stored receipts
+   * (newest first, at most 10) and the Content Credentials report. Free.
+   *
+   * Throws a `PhototologyError` with code `PHOTO_NOT_IN_REGISTRY` (404)
+   * when this account has not analyzed the photo.
+   *
+   * Throws `ValidationError` (`VALIDATION_FAILED`) without a request when
+   * `sha256` is not 64 hex characters.
+   *
+   * @param sha256 Hex SHA-256 of the photo's bytes.
+   */
+  async getPhoto(sha256: string): Promise<PhotoResponse> {
+    if (typeof sha256 !== 'string' || !SHA256_HEX.test(sha256)) {
+      throw new ValidationError('sha256 must be 64 hexadecimal characters', {
+        code: 'VALIDATION_FAILED',
+        status: 400,
+        retryable: false,
+        requestId: 'none',
+      });
+    }
+    const response = await this.request('GET', `/v2/photos/${sha256}`);
+    return safeJson<PhotoResponse>(response);
+  }
+
+  /**
+   * Server-side receipt check: the signature against the published keys and
+   * the RFC 3161 timestamp against the pinned authority roots. Free.
+   *
+   * A 4xx (a malformed receipt) throws without a retry. For an offline
+   * signature check with no network call, use `verifyReceiptSignature`.
+   */
+  async verifyReceipt(receipt: Receipt): Promise<VerifyResponse> {
+    const response = await this.request('POST', '/v1/verify', { receipt }, { auth: false });
+    return safeJson<VerifyResponse>(response);
+  }
+
+  /**
+   * The receipt-signing public keys (`/.well-known/phototology-keys.json`).
+   * Pass the result to `verifyReceiptSignature`. Cache it: keys are only
+   * ever added, so old receipts keep verifying.
+   */
+  async getJwks(): Promise<ReceiptJwks> {
+    const response = await this.request('GET', '/.well-known/phototology-keys.json', undefined, { auth: false });
+    return safeJson<ReceiptJwks>(response);
+  }
+
+  /**
+   * Send a request with retry and pre-emptive rate limit backoff. The API key
+   * goes only to routes that need it: `auth: false` (verify, the key set)
+   * keeps it off public routes that take no key.
+   */
   private async request(
     method: string,
     path: string,
     body?: unknown,
+    opts: { auth?: boolean } = {},
   ): Promise<Response> {
     // Pre-emptive backoff: if we know we're rate-limited, wait until reset
     const now = Date.now();
@@ -172,7 +229,7 @@ export class PhototologyClient {
 
     const url = `${this.baseUrl}${path}`;
     const headers: Record<string, string> = {
-      'Authorization': `Bearer ${this.apiKey}`,
+      ...(opts.auth === false ? {} : { 'Authorization': `Bearer ${this.apiKey}` }),
       'Content-Type': 'application/json',
       'User-Agent': this.userAgent,
     };

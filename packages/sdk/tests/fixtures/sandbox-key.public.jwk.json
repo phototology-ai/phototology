@@ -1,0 +1,10 @@
+{
+  "_comment": "public by design; signs sandbox receipts only",
+  "kty": "EC",
+  "crv": "P-256",
+  "x": "XIBn2J7D1Ckq558uMqiT0PGSQABGgWpjslhoNMOX1CQ",
+  "y": "VFknH3RWBQ39yGsT7xO6iIOrIy6az25y3t7kkbL4oLo",
+  "kid": "sandbox",
+  "use": "sig",
+  "alg": "ES256"
+}

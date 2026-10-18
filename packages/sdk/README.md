@@ -244,6 +244,47 @@ result.meta.creditsCharged; // 5
 
 `enrich()` costs **5 credits per call and bills regardless of cache state.** It requires a prior `analyze()` on the same photo: if the image is not in the registry, it throws `ValidationError` with the message `PHOTO_NOT_IN_REGISTRY`. C2PA signing is deferred, so `formats: ['c2pa']` is rejected.
 
+### Receipts: `client.getPhoto`, `client.verifyReceipt`, `verifyReceiptSignature`
+
+Analyze results carry `receipts`: signed records of which lenses ran on which photo, with which model, and when. Lookups and `getPhoto` return the stored receipts for a photo, newest first, at most 10.
+
+A receipt is `{ payload, signature, timestamp }`. `signature` is a detached compact JWS (ES256) over the canonical JSON (RFC 8785) of `payload`. `timestamp` is an RFC 3161 token over the SHA-256 of the `signature` string, from the authority named in `timestamp.tsa`.
+
+```typescript
+import { PhototologyClient, verifyReceiptSignature } from '@phototology/sdk';
+
+const photo = await client.getPhoto(sha256);   // GET /v2/photos/{sha256}; 404 PHOTO_NOT_IN_REGISTRY when this key never analyzed it
+const receipt = photo.receipts[0];
+
+// Offline: signature only, no network after you have the keys.
+const jwks = await client.getJwks();           // GET /.well-known/phototology-keys.json; cache it
+const check = await verifyReceiptSignature(receipt, jwks);
+check.signature;  // 'valid' | 'invalid' | 'unknown_key'
+check.timestamp;  // always 'unverified' offline (see below)
+check.livemode;   // payload.livemode
+check.keyId;      // payload.keyId
+
+// Server-side: signature and timestamp. Free.
+const result = await client.verifyReceipt(receipt);   // POST /v1/verify
+result.valid;      // true when the signature is valid and the timestamp is valid, pending or unavailable
+result.signature;  // 'valid' | 'invalid' | 'unknown_key'
+result.timestamp;  // 'valid' | 'invalid' | 'pending' | 'unavailable' | 'untrusted_root'
+result.timestampedAt; // the time inside the token when the timestamp is valid, else null
+```
+
+`verifyReceiptSignature` uses WebCrypto (`crypto.subtle`), so it runs in Node 20+, browsers and edge runtimes with no dependency. Keys are only ever added to the key set, so old receipts keep verifying.
+
+**Sandbox keys (normative).** A key in the key set with `"phototology.sandbox": true` (or the key id `sandbox`) signs `pt_test_` receipts only. Its private key is public by design. Any verifier must treat a receipt as `invalid` when the matched key is a sandbox key and `payload.livemode` is not `false`. Both `verifyReceiptSignature` and `POST /v1/verify` apply this rule.
+
+**Checking the timestamp yourself.** The offline check does not verify the timestamp token, because that needs the authority's certificate chain. To check it with OpenSSL, save the base64 `timestamp.token` as DER (`token.der`; it is a bare TimeStampToken, not a full TSA response, hence `-token_in`), put the authority's root certificate in `tsa-roots.pem` (for the default authority, the last certificate from `https://timestamp.sigstore.dev/api/v1/timestamp/certchain`), and run:
+
+```bash
+SIGNATURE='<receipt.signature>'
+openssl ts -verify -data <(printf '%s' "$SIGNATURE") -token_in -in token.der -CAfile tsa-roots.pem
+```
+
+`credentials` on a receipt, an analyze result or a photo record reports the photo's Content Credentials. It reads `{ status: 'unread', note }` until reading them ships; `status` is a plain string so new states can be added.
+
 ## Pricing
 
 - **1 credit = $0.01 = one lens run on one photo.** Stack five lenses on a photo = 5 credits = $0.05.

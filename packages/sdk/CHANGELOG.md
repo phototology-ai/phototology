@@ -1,5 +1,19 @@
 # @phototology/sdk Changelog
 
+## Unreleased
+
+### Added
+- **Receipts.** `AnalyzeResponse.receipts?: Receipt[]` and `.credentials?`, `LookupResult.receipts?` and `.credentials?`. New exported types: `Receipt`, `ReceiptPayload`, `ReceiptSubject`, `ReceiptLens`, `ReceiptTimestamp`, `ReceiptJwk`, `ReceiptJwks`, `CredentialsReport`, `VerifyResponse`, `PhotoResponse`. Optional so responses from API versions without receipts still type-check.
+- **`client.getPhoto(sha256)`**: GET `/v2/photos/{sha256}`, the registry record with its stored receipts. 404 `PHOTO_NOT_IN_REGISTRY` when this key never analyzed the photo.
+- **`client.verifyReceipt(receipt)`**: POST `/v1/verify`, the server-side signature and timestamp check. Free.
+- **`client.getJwks()`**: GET `/.well-known/phototology-keys.json`.
+- **`verifyReceiptSignature(receipt, jwks)`** and **`canonicalJson(value)`**: offline ES256 signature check with WebCrypto, no new dependency. A sandbox key (`"phototology.sandbox": true` or key id `sandbox`) never verifies a receipt whose `livemode` is not `false`. The timestamp reads `'unverified'` offline.
+- **Image identity on photo records and fingerprints.** `PhotoRecord` and `Fingerprint` gain optional `pixelsSha256` (SHA-256 of the decoded pixels, equal for files that differ only in metadata; absent above 40 MP), `pdq` (new exported `PdqFingerprint`: `hash`, `quality` 0 to 100, and the 8 dihedral `variants`) and `iscc` (ISCC Image-Code). Present only on photos analyzed since the API began recording them.
+- **Lookup match tiers.** `LookupResult.matchType` adds `'pixels'` (same decoded pixels, different metadata) and `'pdq'` (PDQ within 31 bits, such as a re-encode, rotation or flip), tried after `'exact'` and before `'fuzzy'`. `LookupResult.pdqDistance?` is set only on `'pdq'` matches.
+- **Both pHash forms on lookup.** `LookupRequest.pHash` accepts the 64-character bit string that analyze and lookup return, or the same 64 bits as 16 hex characters.
+- **`EnrichResponse.registryId?`**: the registry id written into the enriched file's XMP (the sha256 of the original bytes), so a later lookup can find the photo from what is written in it. Present only when the write stored it.
+- **Savings on analyze usage.** `AnalyzeUsage.creditsSaved?` counts billable lens runs served from the cache instead of charged (0 on a fresh run). `AnalyzeUsage.usd?` gives `{ charged, saved }` as dollar strings with two decimals, at $0.01 per credit.
+
 ## 1.3.0 (2026-06-02)
 
 ### Changed

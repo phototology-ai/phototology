@@ -38,7 +38,21 @@ export type {
   PhotoRecord,
   EnrichRequest,
   EnrichResponse,
+  Receipt,
+  ReceiptPayload,
+  ReceiptSubject,
+  ReceiptLens,
+  ReceiptTimestamp,
+  ReceiptJwk,
+  ReceiptJwks,
+  CredentialsReport,
+  VerifyResponse,
+  PhotoResponse,
 } from './types';
+
+// Offline receipt signature check (WebCrypto, no network)
+export { verifyReceiptSignature, canonicalJson } from './verify';
+export type { ReceiptSignatureCheck } from './verify';
 
 // Errors
 export {
