@@ -44,7 +44,7 @@ allow packages/phototology-mcp/{README.md,CHANGELOG.md,SECURITY.md,LICENSE,packa
 allow packages/phototology-bare/{index.js,README.md,LICENSE,package.json,pack-manifest.json,.npmignore}
 
 # Guard + its config
-allow scripts/public-surface/{check.mjs,check-pack.mjs,lib.mjs,README.md}
+allow scripts/public-surface/{check.mjs,check-pack.mjs,check-versions.mjs,lib.mjs,README.md}
 allow scripts/public-mirror/{package.json,pnpm-workspace.yaml,pnpm-lock.yaml,README.public.md}
 allow tsconfig.base.json
 allow {public-surface.allowlist,public-fixtures.allow,.gitleaks.toml}

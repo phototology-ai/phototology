@@ -12,6 +12,7 @@
     "typecheck": "pnpm --filter @phototology/sdk typecheck && pnpm --filter @phototology/mcp typecheck",
     "test": "pnpm --filter @phototology/sdk test && pnpm --filter @phototology/mcp test",
     "check:surface": "node scripts/public-surface/check.mjs .",
+    "check:versions": "node scripts/public-surface/check-versions.mjs",
     "check:pack": "node scripts/public-surface/check-pack.mjs packages/sdk packages/mcp packages/phototology"
   }
 }
