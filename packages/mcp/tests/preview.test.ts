@@ -31,7 +31,7 @@ describe('makePreview', () => {
     expect(meta.width).toBe(1024);
     expect(meta.height).toBe(683);
     expect(bytes.length).toBeLessThan(300 * 1024);
-  });
+  }, 30_000); // image work: slow on shared CI runners
 
   it('does not upscale a 400x300 input', async () => {
     const preview = await makePreview(await gradientJpeg(400, 300));

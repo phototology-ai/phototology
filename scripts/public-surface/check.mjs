@@ -31,7 +31,7 @@ let checkPaths = true;
 let ignoreNodeModules = false;
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
-  if (a === '--tarball') tarballs.push(argv[++i]);
+  if (a === '--tarball') { while (argv[i + 1] && !argv[i + 1].startsWith('--')) tarballs.push(argv[++i]); }
   else if (a === '--message-file') messageFile = argv[++i];
   else if (a === '--no-paths') checkPaths = false;
   // Only for a tree after `pnpm install` (installed deps are not part of the
@@ -167,8 +167,13 @@ function scanNames(file, lineNo, text) {
   }
 }
 
+// Lockfiles carry npm registry metadata about third-party packages (e.g. an
+// author's contact in a deprecation notice): personal-data rules don't apply.
+const isLockfile = (p) => /(^|\/)(pnpm-lock\.yaml|package-lock\.json)$/.test(p);
+
 function scanText(file, text, { patterns = true, hashes = false } = {}) {
   const lines = text.split('\n');
+  const lock = isLockfile(file);
   lines.forEach((line, i) => {
     const n = i + 1;
     scanNames(file, n, line);
@@ -177,6 +182,7 @@ function scanText(file, text, { patterns = true, hashes = false } = {}) {
         re.lastIndex = 0;
         for (const m of line.matchAll(re)) {
           if (keep && !keep(m[0])) continue;
+          if (lock && id.startsWith('personal/')) continue;
           add(file, n, id, mask(m[0]));
         }
       }
@@ -238,8 +244,11 @@ function scanTree(root, { treeMode, label = '' }) {
         add(rel, 0, 'path/not-allowed', 'mirror root file not on the mirror-root list');
       }
     } else if (allowlistFile) {
+      // Tarball: built output under package/dist/ is the point; the rest of the
+      // hard denylist (env files, keys, agent notes, maps, ...) still applies.
       const { deny } = parseAllowlist(allowlistFile);
-      if (matchesAny(deny, f.rel)) add(rel, 0, 'path/denied', 'matches the hard denylist');
+      const builtOutput = /^package\/dist\/.*\.(?:[cm]?js|d\.ts|json)$/.test(f.rel);
+      if (!builtOutput && matchesAny(deny, f.rel)) add(rel, 0, 'path/denied', 'matches the hard denylist');
     }
     scanFile(rel, f.abs, { treeMode });
   }

@@ -47,9 +47,16 @@ console.log(result);
 
 ## How it's built
 
-This repo is a public mirror of the relevant subdirectories from a private monorepo. Source changes flow one-way: monorepo → here. Issues and pull requests on the public packages are welcomed; the maintainer will sync fixes back to the monorepo.
+This repo is a public mirror of the package folders from a private monorepo. Changes flow one way: upstream → here. Issues and pull requests are welcome; fixes are applied upstream and synced back.
 
-The monorepo uses pnpm workspaces, TypeScript, jest (MCP) / vitest (SDK has light coverage), and ships through a sync script (`scripts/sync-phototology-public.sh` in the private repo).
+- **CI** runs on every push and pull request: a frozen install from the committed `pnpm-lock.yaml`, typecheck, tests, build, a check that each npm tarball contains exactly the files in its `pack-manifest.json`, gitleaks, and the public-surface guard.
+- **Releases** are published from this repo by `.github/workflows/release.yml`, to npm with provenance (trusted publishing, no npm token), with a GitHub release carrying an SBOM, and to the MCP Registry.
+
+## What is (and isn't) in this repo
+
+Only what an explicit allowlist (`public-surface.allowlist`) permits is synced here, read from git, and every sync is checked by `scripts/public-surface/check.mjs` before it is pushed. That check rejects secrets, any customer or personal data (including derived hashes, EXIF, filenames and IDs), production-derived fixtures, internal docs and agent notes, infrastructure names and private paths. Test fixtures are synthetic or public-domain (see each `tests/fixtures/SOURCES.md`).
+
+Found something here that shouldn't be public? Please report it privately as described in [packages/mcp/SECURITY.md](./packages/mcp/SECURITY.md).
 
 ## License
 

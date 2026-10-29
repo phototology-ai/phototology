@@ -1,0 +1,26 @@
+{
+  "name": "@phototology/sdk",
+  "files": [
+    "CHANGELOG.md",
+    "LICENSE",
+    "README.md",
+    "bin/init.js",
+    "dist/client.d.ts",
+    "dist/client.js",
+    "dist/errors.d.ts",
+    "dist/errors.js",
+    "dist/index.d.ts",
+    "dist/index.js",
+    "dist/init.d.ts",
+    "dist/init.js",
+    "dist/lens-fields.d.ts",
+    "dist/lens-fields.js",
+    "dist/retry.d.ts",
+    "dist/retry.js",
+    "dist/types.d.ts",
+    "dist/types.js",
+    "dist/verify.d.ts",
+    "dist/verify.js",
+    "package.json"
+  ]
+}

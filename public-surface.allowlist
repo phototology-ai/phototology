@@ -22,6 +22,13 @@ map scripts/public-surface      scripts/public-surface
 map public-surface.allowlist    public-surface.allowlist
 map public-fixtures.allow       public-fixtures.allow
 map .gitleaks.toml              .gitleaks.toml
+# Workspace root of the public repo (so its CI and releases install from a
+# committed lockfile and build exactly like upstream).
+map scripts/public-mirror/package.json        package.json
+map scripts/public-mirror/pnpm-workspace.yaml pnpm-workspace.yaml
+map scripts/public-mirror/pnpm-lock.yaml      pnpm-lock.yaml
+map scripts/public-mirror/README.public.md    README.md
+map tsconfig.base.json                        tsconfig.base.json
 
 # @phototology/sdk
 allow packages/phototology-sdk/{src/**,bin/**,tests/**}
@@ -37,7 +44,9 @@ allow packages/phototology-mcp/{README.md,CHANGELOG.md,SECURITY.md,LICENSE,packa
 allow packages/phototology-bare/{index.js,README.md,LICENSE,package.json,pack-manifest.json,.npmignore}
 
 # Guard + its config
-allow scripts/public-surface/{check.mjs,lib.mjs,README.md}
+allow scripts/public-surface/{check.mjs,check-pack.mjs,lib.mjs,README.md}
+allow scripts/public-mirror/{package.json,pnpm-workspace.yaml,pnpm-lock.yaml,README.public.md}
+allow tsconfig.base.json
 allow {public-surface.allowlist,public-fixtures.allow,.gitleaks.toml}
 
 # Files that live only at the mirror root, managed by scripts/public-mirror/deploy.sh

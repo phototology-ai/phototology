@@ -1,0 +1,9 @@
+{
+  "name": "phototology",
+  "files": [
+    "LICENSE",
+    "README.md",
+    "index.js",
+    "package.json"
+  ]
+}

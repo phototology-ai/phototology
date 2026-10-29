@@ -28,7 +28,10 @@ function docFiles(): string[] {
 describe('docs quote the shipped result shapes', () => {
   it('covers every skill, CLAUDE.md, README.md and the tool descriptions', () => {
     const files = docFiles();
-    expect(files).toEqual(expect.arrayContaining(['CLAUDE.md', 'README.md', 'skills/batch-analyze/SKILL.md', 'skills/lookup-first/SKILL.md', 'src/tools/enrich-photo.ts']));
+    // CLAUDE.md is private (never synced to the public repo), so it is only
+    // required where it exists.
+    const expected = fs.existsSync(path.join(ROOT, 'CLAUDE.md')) ? ['CLAUDE.md'] : [];
+    expect(files).toEqual(expect.arrayContaining([...expected, 'README.md', 'skills/batch-analyze/SKILL.md', 'skills/lookup-first/SKILL.md', 'src/tools/enrich-photo.ts']));
   });
 
   it.each(RETIRED)('no doc names the retired field %s', (_name, pattern) => {

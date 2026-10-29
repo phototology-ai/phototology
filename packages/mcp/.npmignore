@@ -1,0 +1,2 @@
+# The `files` allowlist in package.json is what controls the npm tarball.
+# pack-manifest.json + tests/pack-contents.test.ts make any change to it explicit.
