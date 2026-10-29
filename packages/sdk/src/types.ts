@@ -159,6 +159,30 @@ export type DateSource = 'exif' | 'filename' | 'visual' | 'batch';
 /** Values of {@link EstimatedDate.captureSource}. Treat unknown values as `'unknown'`. */
 export type CaptureSource = 'camera_original' | 'scan' | 'edited' | 'screenshot' | 'ai_generated' | 'unknown';
 
+/** Kind of a recommended action in an insurance-domain `describe`. */
+export type InsuranceAction = 'repair' | 'replace' | 'mitigate' | 'further_inspection' | 'monitor' | 'other';
+
+/** One recommended action: its kind plus the model's wording. */
+export interface RecommendedAction {
+  action: InsuranceAction;
+  description?: string;
+}
+
+/**
+ * `output.describe.domainExtensions` when `moduleOptions.describe.domain` is
+ * `'insurance'`. Every field is optional and results analyzed before these
+ * fields existed have none. `PhotoOutput` stays an open record; cast to read:
+ * `(result.output.describe as { domainExtensions?: InsuranceDescribeExtensions } | undefined)?.domainExtensions`.
+ */
+export interface InsuranceDescribeExtensions {
+  /** Cause the visible evidence supports, or `"undetermined"`. */
+  likelyCause?: string;
+  /** Damaged objects or building elements, e.g. `"windshield"`. */
+  affectedComponents?: string[];
+  recommendedActions?: RecommendedAction[];
+  [key: string]: unknown;
+}
+
 /** Vehicle condition output (opaque record; fields vary by modules used). */
 export type VehicleOutput = Record<string, unknown>;
 

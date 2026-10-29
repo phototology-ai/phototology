@@ -53,6 +53,9 @@ export type {
   ReceiptCredentials,
   VerifyResponse,
   PhotoResponse,
+  InsuranceDescribeExtensions,
+  RecommendedAction,
+  InsuranceAction,
 } from './types';
 
 // Offline receipt signature check (WebCrypto, no network)
