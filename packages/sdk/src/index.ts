@@ -14,6 +14,8 @@ export type {
   PhotoAnalyzeResponse,
   VehicleAnalyzeResponse,
   PhotoOutput,
+  EstimatedDate,
+  YearRange,
   VehicleOutput,
   AnalyzeUsage,
   AnalyzeMeta,

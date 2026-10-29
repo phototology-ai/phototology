@@ -81,7 +81,7 @@ export function buildServerInstructions(): string {
     'You will receive a tool error whose first line is JSON with `"code":"OUT_OF_CREDITS"` and an `actionUrl` pointing at the wallet; the next line starts "OUT_OF_CREDITS:". **Surface the URL to the user verbatim**. They need to open it in a browser to buy credits. Do not retry the failed call until they confirm they purchased.',
     '',
     '## Response shape',
-    'Analyze output is flat-keyed JSON: top-level keys are field names (e.g. `estimatedDate`, `peopleCount`, `atmosphere`), not lens names. Use `list_lenses` to map fields back to their owning lens.',
+    'Analyze output is flat-keyed JSON: top-level keys are field names (e.g. `estimatedDate`, `peopleCount`, `atmosphere`), not lens names. Use `list_lenses` to map fields back to their owning lens. Dates: `estimatedDate.yearRange` (`{ from, to }`) is the estimate; `estimatedDate.year` is the single best year (kept for older clients); `rangeLabel` reads like "c. 1975–1985". Quote the range, not just the year, when confidence is `low` or `medium`.',
     '',
     '## Receipts',
     'Analyze and lookup results carry `receipts`, signed records of which lenses ran on which photo. `receipts` may be empty; on an analyze result, `warnings` then names why (`RECEIPT_UNAVAILABLE`, `RECEIPT_NONE_STORED`, or a `RECEIPT_NOT_ISSUED_*` code). Today only `pt_test_` keys receive receipts (signed by the public sandbox key, never vouching for live data), so a `pt_live_` key gets `RECEIPT_UNAVAILABLE` on a fresh analyze and `RECEIPT_NONE_STORED` on a registry hit.',

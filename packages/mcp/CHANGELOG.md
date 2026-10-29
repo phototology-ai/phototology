@@ -2,6 +2,11 @@
 
 All notable changes to `@phototology/mcp` are tracked here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning follows [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+- `analyze_photo` description and the server instructions describe the dating output's `estimatedDate.yearRange` (`{ from, to }`), the back-compat `year`, and `rangeLabel`, and ask agents to quote the range rather than a bare year when confidence is `low` or `medium`. Tool inputs and result shapes are unchanged.
+
 ## [2.0.0] - 2026-10-18
 
 ### Breaking

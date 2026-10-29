@@ -111,6 +111,31 @@ export interface AnalyzeRequest {
 /** Photo analysis output (opaque record; fields vary by modules used). */
 export type PhotoOutput = Record<string, unknown>;
 
+/** Inclusive year range of a date estimate. */
+export interface YearRange {
+  from: number;
+  to: number;
+}
+
+/**
+ * Shape of `output.estimatedDate` from the `dating` lens. Every field is
+ * optional; read it from {@link PhotoOutput} with a cast, e.g.
+ * `const date = result.output.estimatedDate as EstimatedDate | undefined`.
+ *
+ * `yearRange` (added 2026-10) is the primary estimate. `year` is kept for
+ * backward compatibility: the model's best single year, or the range midpoint
+ * when only a range was returned. `rangeLabel` is a display string such as
+ * `"c. 1975–1985"`. Process type or print look alone is always `low`.
+ */
+export interface EstimatedDate {
+  year?: number | null;
+  yearRange?: YearRange | null;
+  rangeLabel?: string;
+  decade?: string | null;
+  confidence?: 'high' | 'medium' | 'low';
+  reasoning?: string;
+}
+
 /** Vehicle condition output (opaque record; fields vary by modules used). */
 export type VehicleOutput = Record<string, unknown>;
 
