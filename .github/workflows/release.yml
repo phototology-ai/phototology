@@ -22,14 +22,28 @@ name: Publish to npm (with provenance)
 # Versions come from each package.json: bump them in the private monorepo; they
 # sync here. This workflow only builds and publishes the current versions.
 #
+# Approval gate: `publish` runs in the `npm-publish` environment, so nothing
+# reaches npm until a required reviewer approves the run. `preflight` refuses
+# to start unless that environment exists with required reviewers and a
+# branch policy, and only from main (a workflow that names a missing
+# environment would otherwise have GitHub create it unprotected).
+#
+# Before anything is packed, `build` re-runs the CI gates on the exact commit:
+# leak guard, versions, frozen install, typecheck, tests, pack manifests, and
+# the guard on the tarballs. After publishing, `verify` checks that npm serves
+# the versions with provenance and that the MCP Registry has server.json.
+#
 # Prerequisites (one-time, see docs/runbooks/npm-provenance-publishing.md in
 # the monorepo):
+#   - Environment `npm-publish` in this repo: required reviewer(s), deployment
+#     branches limited to main.
 #   - On npmjs.com, each package (@phototology/sdk, @phototology/mcp,
-#     phototology) lists this repo + workflow file (release.yml) as a trusted
-#     publisher.
+#     phototology) lists this repo + workflow file (release.yml) +
+#     environment `npm-publish` as its trusted publisher, with "require 2FA
+#     and disallow tokens" set.
 #   - Repo secret MCP_REGISTRY_PRIVATE_KEY (hex Ed25519 key) and the matching
 #     TXT record on phototology.com for the MCP Registry job. Until both
-#     exist that job fails without failing the run, and prints the record.
+#     exist that job fails (after npm publish) and prints the record.
 #   - This repo is public and each package's repository.url points here.
 #
 # Source of truth for this file lives in the upstream private monorepo.
@@ -52,6 +66,11 @@ on:
 # Nothing by default; each job asks for exactly what it needs.
 permissions: {}
 
+# One release at a time; never cancel a run that may be mid-publish.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 env:
   # The choice input, read by run blocks from the environment (never interpolated).
   PACKAGE: ${{ inputs.package }}
@@ -60,10 +79,51 @@ env:
   MCP_PUBLISHER_VERSION: "1.8.1"
   # sha256 of mcp-publisher_linux_amd64.tar.gz, from registry_1.8.1_checksums.txt
   MCP_PUBLISHER_SHA256: "a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc"
+  GITLEAKS_VERSION: "8.30.1"
+  GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
 
 jobs:
+  # Refuses to start a release unless the approval gate is really there.
+  preflight:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Only from main
+        run: |
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "::error::Releases run from main only (this run: ${GITHUB_REF})."
+            exit 1
+          fi
+
+      - name: npm-publish environment exists with required reviewers
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! env_json="$(gh api "repos/${GITHUB_REPOSITORY}/environments/npm-publish" 2>/dev/null)"; then
+            echo "::error::Environment npm-publish does not exist. Create it (Settings, Environments) with a required reviewer and deployment branches limited to main, then re-run."
+            exit 1
+          fi
+          printf '%s' "${env_json}" | node -e '
+            const e = JSON.parse(require("fs").readFileSync(0, "utf8"));
+            const rules = e.protection_rules || [];
+            const rr = rules.find((r) => r.type === "required_reviewers");
+            const n = rr && Array.isArray(rr.reviewers) ? rr.reviewers.length : 0;
+            const bp = e.deployment_branch_policy;
+            const problems = [];
+            if (n < 1) problems.push("no required reviewers");
+            if (!bp) problems.push("deployment branches are not restricted");
+            if (problems.length) {
+              console.error("::error::Environment npm-publish is not protected: " + problems.join("; ") + ".");
+              process.exit(1);
+            }
+            console.log("npm-publish: " + n + " required reviewer(s), branch policy " + JSON.stringify(bp));
+          '
+
   # Installs, builds, packs, and writes the release attachments. Read-only.
   build:
+    needs: preflight
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -80,13 +140,57 @@ jobs:
         with:
           node-version: 22
 
-      - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
+      - name: Install gitleaks (pinned, checksum-verified)
+        run: |
+          set -euo pipefail
+          f="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSL -o "${RUNNER_TEMP}/${f}" "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${f}"
+          echo "${GITLEAKS_SHA256}  ${RUNNER_TEMP}/${f}" | sha256sum -c -
+          tar -xzf "${RUNNER_TEMP}/${f}" -C "${RUNNER_TEMP}" gitleaks
+          echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
+
+      - name: Public-surface guard (before anything is installed)
+        run: node scripts/public-surface/check.mjs .
+
+      - name: Versions agree (package.json, SDK_VERSION, server.json, CHANGELOG)
+        run: node scripts/public-surface/check-versions.mjs
+
+      - name: Not already on npm
+        run: |
+          set -euo pipefail
+          taken=0
+          check() {
+            local name="$1" dir="$2" v
+            v="$(node -p "require('./${dir}/package.json').version")"
+            if [ -n "$(npm view "${name}@${v}" version 2>/dev/null)" ]; then
+              echo "::error::${name}@${v} is already on npm. Bump it with release:prepare in the monorepo."
+              taken=1
+            fi
+          }
+          case "${PACKAGE}" in
+            sdk) check @phototology/sdk packages/sdk ;;
+            mcp) check @phototology/mcp packages/mcp ;;
+            phototology) check phototology packages/phototology ;;
+            all) check @phototology/sdk packages/sdk; check @phototology/mcp packages/mcp; check phototology packages/phototology ;;
+          esac
+          exit "${taken}"
+
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
 
       - name: Build (sdk + mcp; the bare `phototology` package has no build)
         run: |
           pnpm --filter @phototology/sdk build
           pnpm --filter @phototology/mcp build
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Test
+        run: pnpm run test
+
+      - name: npm pack contents match pack-manifest.json
+        run: pnpm run check:pack
 
       - name: Pack, SBOM, tools-list hash
         run: |
@@ -163,6 +267,9 @@ jobs:
           fi
           find "${out}" -type f | sort
 
+      - name: Guard the release tarballs
+        run: node scripts/public-surface/check.mjs --tarball "${RUNNER_TEMP}"/release/*/package.tgz
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-files
@@ -170,10 +277,12 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  # Holds the OIDC token. Runs no installed or third-party code.
+  # Holds the OIDC token. Runs no installed or third-party code. Waits for a
+  # required reviewer to approve the npm-publish environment.
   publish:
     needs: build
     runs-on: ubuntu-latest
+    environment: npm-publish
     permissions:
       contents: read
       id-token: write # npm trusted publishing + provenance, via OIDC
@@ -280,12 +389,11 @@ jobs:
 
   # The MCP Registry authenticates the com.phototology namespace by a DNS TXT
   # record on phototology.com. Until the secret and the record exist this job
-  # fails without failing the run, and prints what to add.
+  # fails (npm is already published by then) and prints what to add.
   registry:
     needs: publish
     if: inputs.package == 'mcp' || inputs.package == 'all'
     runs-on: ubuntu-latest
-    continue-on-error: true
     permissions:
       contents: read
     steps:
@@ -325,3 +433,68 @@ jobs:
           "${bin}/mcp-publisher" validate packages/mcp/server.json
           "${bin}/mcp-publisher" login dns --domain phototology.com --private-key "${MCP_REGISTRY_PRIVATE_KEY}"
           "${bin}/mcp-publisher" publish packages/mcp/server.json
+
+  # Checks what the world now sees: npm serves each version with a provenance
+  # attestation, and the MCP Registry lists the mcp version.
+  verify:
+    needs: [build, publish, release, registry]
+    if: ${{ always() && needs.publish.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-files
+          path: ${{ runner.temp }}/release
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: npm serves the versions, with provenance
+        run: |
+          set -euo pipefail
+          out="${RUNNER_TEMP}/release"
+          fail=0
+          verify_one() {
+            local name="$1" short="$2" version att
+            version="$(cat "${out}/${short}/version")"
+            for i in $(seq 1 30); do
+              att="$(npm view "${name}@${version}" dist.attestations.provenance.predicateType 2>/dev/null || true)"
+              [ -n "${att}" ] && break
+              sleep 10
+            done
+            if [ -z "${att}" ]; then
+              echo "::error::${name}@${version}: not on npm with a provenance attestation after 5 minutes"
+              fail=1
+            else
+              echo "${name}@${version}: on npm, provenance ${att}"
+            fi
+          }
+          for pair in "@phototology/sdk sdk" "@phototology/mcp mcp" "phototology phototology"; do
+            set -- ${pair}
+            if [ -d "${out}/$2" ]; then verify_one "$1" "$2"; fi
+          done
+          exit "${fail}"
+
+      - name: MCP Registry lists the mcp version
+        if: ${{ inputs.package == 'mcp' || inputs.package == 'all' }}
+        run: |
+          set -euo pipefail
+          version="$(cat "${RUNNER_TEMP}/release/mcp/version")"
+          for i in $(seq 1 18); do
+            if curl -fsS "https://registry.modelcontextprotocol.io/v0/servers?search=com.phototology/mcp" \
+              | node -e '
+                  const v = process.argv[1];
+                  const j = JSON.parse(require("fs").readFileSync(0, "utf8"));
+                  const list = j.servers || [];
+                  const ok = list.some((s) => ((s.server || s).version) === v);
+                  process.exit(ok ? 0 : 1);
+                ' "${version}"; then
+              echo "MCP Registry: com.phototology/mcp ${version} listed"; exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::MCP Registry does not list com.phototology/mcp ${version} (see the registry job)"
+          exit 1

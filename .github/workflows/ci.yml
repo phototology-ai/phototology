@@ -52,6 +52,9 @@ jobs:
       - name: Public-surface guard (before anything is installed)
         run: node scripts/public-surface/check.mjs .
 
+      - name: Versions agree (package.json, SDK_VERSION, server.json, CHANGELOG)
+        run: node scripts/public-surface/check-versions.mjs
+
       - name: Install (frozen lockfile)
         run: pnpm install --frozen-lockfile
 
