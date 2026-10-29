@@ -6,6 +6,7 @@ All notable changes to `@phototology/mcp` are tracked here. Format follows [Keep
 
 ### Changed
 - `analyze_photo` description and the server instructions describe the dating output's `estimatedDate.yearRange` (`{ from, to }`), the back-compat `year`, and `rangeLabel`, and ask agents to quote the range rather than a bare year when confidence is `low` or `medium`. Tool inputs and result shapes are unchanged.
+- `analyze_photo` description and server instructions explain EXIF-first dating: `estimatedDate.dateSource` (`exif` = the camera's capture date, `visual` = the model's estimate), `capturedAt`, and `notAfterYear` (a scan or save date, a cap only). Local files are sent as their original bytes, so their EXIF is read; nothing else about the inputs changes.
 
 ## [2.0.0] - 2026-10-18
 

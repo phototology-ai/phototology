@@ -4,6 +4,7 @@
 
 ### Added
 - **`EstimatedDate` and `YearRange` types** describing `output.estimatedDate` from the `dating` lens: `yearRange?: { from, to }` (the estimate, inclusive), `year?` (single best year, kept for older clients; the range midpoint when the model gave only a range), `rangeLabel?` (e.g. `"c. 1975–1985"`), `decade?`, `confidence?`, `reasoning?`. `PhotoOutput` stays an open record, so nothing existing changes; cast to read it: `result.output.estimatedDate as EstimatedDate | undefined`. Results produced before the range existed have no `yearRange`.
+- **EXIF-first dating fields on `EstimatedDate`** (all optional): `dateSource?` (`'exif' | 'filename' | 'visual' | 'batch'`, new `DateSource` type), `capturedAt?`, `captureSource?` (new `CaptureSource` type), `notAfterYear?`, `visualEstimate?`. A camera original's capture date now comes back as `dateSource: 'exif'` with a one-year `yearRange`; scan and save dates only cap the estimate (`notAfterYear`). Treat unknown `dateSource` values as `'visual'`.
 
 ## 2.0.0 (2026-10-18)
 

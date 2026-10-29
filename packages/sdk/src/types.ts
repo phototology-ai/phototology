@@ -126,6 +126,13 @@ export interface YearRange {
  * backward compatibility: the model's best single year, or the range midpoint
  * when only a range was returned. `rangeLabel` is a display string such as
  * `"c. 1975–1985"`. Process type or print look alone is always `low`.
+ *
+ * EXIF-first dating (added 2026-10): when the original file is a camera
+ * original with a plausible capture date, `dateSource` is `'exif'`, `year`
+ * is the capture year, `yearRange` is that single year, `capturedAt` holds
+ * the timestamp, and the model's guess moves to `visualEstimate`. Scan and
+ * save dates are never used as the photo's date; they only cap it
+ * (`notAfterYear`). Older results have none of these fields.
  */
 export interface EstimatedDate {
   year?: number | null;
@@ -134,7 +141,23 @@ export interface EstimatedDate {
   decade?: string | null;
   confidence?: 'high' | 'medium' | 'low';
   reasoning?: string;
+  /** Where `year` came from. `'filename'` and `'batch'` appear only in Studio exports. */
+  dateSource?: DateSource;
+  /** EXIF capture timestamp, e.g. `"2013-06-19T18:08:32+02:00"` (no offset when the camera wrote none). Only with `dateSource: 'exif'`. */
+  capturedAt?: string;
+  /** What the file's metadata (and the photo-quality / authenticity lenses, when they ran) says it is. */
+  captureSource?: CaptureSource;
+  /** Latest possible year, from a scan or file-save date that is not the capture date. */
+  notAfterYear?: number;
+  /** The model's own estimate, kept when metadata replaced or capped it. */
+  visualEstimate?: { year?: number | null; yearRange?: YearRange | null; confidence?: 'high' | 'medium' | 'low' };
 }
+
+/** Values of {@link EstimatedDate.dateSource}. Treat unknown values as `'visual'`. */
+export type DateSource = 'exif' | 'filename' | 'visual' | 'batch';
+
+/** Values of {@link EstimatedDate.captureSource}. Treat unknown values as `'unknown'`. */
+export type CaptureSource = 'camera_original' | 'scan' | 'edited' | 'screenshot' | 'ai_generated' | 'unknown';
 
 /** Vehicle condition output (opaque record; fields vary by modules used). */
 export type VehicleOutput = Record<string, unknown>;
