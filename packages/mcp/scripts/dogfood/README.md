@@ -56,7 +56,7 @@ Verify by asking *"What MCP servers do I have?"* — `phototology-dogfood` shoul
 
 Ask Claude Code:
 
-> Use the phototology MCP to analyze this photo and tell me what it is: https://drvin.ai/showcase-lexus-front.jpg
+> Use the phototology MCP to analyze this photo and tell me what it is: https://upload.wikimedia.org/wikipedia/commons/a/a9/Example.jpg
 
 Watch what happens:
 

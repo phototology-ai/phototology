@@ -1,0 +1,84 @@
+# public-surface.allowlist: the ONLY files that may leave this private repo for
+# the public mirror github.com/phototology-ai/phototology.
+#
+# Policy: docs/PUBLIC_SURFACE.md. Owner: the repository owner (changes need the owner's OK).
+#
+# Format, one rule per line:
+#   map  <monorepo dir>  <mirror dir>   which package folders are exported, and where
+#   allow <glob>                        a file may be exported if it matches (path relative
+#                                        to the monorepo root). Anything not allowed is dropped.
+#   deny  <glob>                        never exported, even if allowed. Deny always wins.
+#
+# Globs: `*` = within one path segment, `**` = any depth, `{a,b}` = alternatives.
+# Files are read from git (a commit), never from the working tree, so untracked
+# or ignored files can never ship.
+
+map packages/phototology-sdk  packages/sdk
+map packages/phototology-mcp  packages/mcp
+map packages/phototology-bare packages/phototology
+# The guard ships with the mirror so its CI runs the same checks (minus the
+# private name list, which stays here).
+map scripts/public-surface      scripts/public-surface
+map public-surface.allowlist    public-surface.allowlist
+map public-fixtures.allow       public-fixtures.allow
+map .gitleaks.toml              .gitleaks.toml
+
+# @phototology/sdk
+allow packages/phototology-sdk/{src/**,bin/**,tests/**}
+allow packages/phototology-sdk/{README.md,CHANGELOG.md,LICENSE,package.json,tsconfig.json,jest.config.js,pack-manifest.json,.npmignore}
+
+# @phototology/mcp
+allow packages/phototology-mcp/{src/**,bin/**,skills/**,docs/**,tests/**}
+allow packages/phototology-mcp/scripts/tools-list-hash.mjs
+allow packages/phototology-mcp/scripts/dogfood/**
+allow packages/phototology-mcp/{README.md,CHANGELOG.md,SECURITY.md,LICENSE,package.json,server.json,tsconfig.json,jest.config.js,pack-manifest.json,.npmignore}
+
+# phototology (bare placeholder)
+allow packages/phototology-bare/{index.js,README.md,LICENSE,package.json,pack-manifest.json,.npmignore}
+
+# Guard + its config
+allow scripts/public-surface/{check.mjs,lib.mjs,README.md}
+allow {public-surface.allowlist,public-fixtures.allow,.gitleaks.toml}
+
+# Files that live only at the mirror root, managed by scripts/public-mirror/deploy.sh
+# (the guard accepts these in a mirror checkout; the sync never writes them).
+mirror-root README.md
+mirror-root LICENSE
+mirror-root SECURITY.md
+mirror-root package.json
+mirror-root pnpm-workspace.yaml
+mirror-root pnpm-lock.yaml
+mirror-root tsconfig.base.json
+mirror-root .gitignore
+mirror-root .github/workflows/*.yml
+mirror-root .github/CODEOWNERS
+mirror-root .github/dependabot.yml
+
+# Hard denylist: always wins over allow.
+deny **/.env*
+deny **/*.pem
+deny **/*.key
+deny **/*.p12
+deny **/*.pfx
+deny **/.npmrc
+deny **/CLAUDE.md
+deny **/CLAUDE.local.md
+deny **/AGENTS.md
+deny **/*-DRAFT*
+deny **/*.sqlite*
+deny **/*.db
+deny **/*.db-*
+deny **/fixtures/prod-*
+deny **/fixtures/prod_*
+deny **/*.local.*
+deny **/*.log
+deny **/*.map
+deny **/*.tsbuildinfo
+deny **/node_modules/**
+deny **/dist/**
+deny **/coverage/**
+deny **/.vscode/**
+deny **/.idea/**
+deny **/.DS_Store
+# Monorepo-only tests (cross-package parity checks that read private code).
+deny **/tests/monorepo/**

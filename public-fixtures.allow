@@ -1,0 +1,16 @@
+# public-fixtures.allow: exact values the public-surface guard accepts in
+# fixtures/tests even though they look like real hashes, IDs or keys.
+# One value per line with a comment saying where it comes from and why it is
+# not customer data. 'path:<mirror path>' allows a binary over 200 KB.
+# Owner: the repository owner. Policy: docs/PUBLIC_SURFACE.md.
+
+# Well-known digests used to test the hashing code (not derived from any photo).
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  # sha256 of the empty string
+ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad  # sha256 of "abc"
+# Hand-typed placeholder perceptual hashes in SDK/MCP tests.
+8f3c2a1b4d5e6f70  # sdk receipts fixture pHash placeholder
+8F14e45fceea167a  # mcp lookup-photo test: mixed-case input
+# Synthetic fixtures with documented provenance.
+daec68991a1c993e6c259e3a0d9b1e1f1bfe6297359e40a451b3980486436c5b  # sha256 of mcp tests/fixtures/registry-id.jpg, a generated 32x24 solid square (see tests/fixtures/SOURCES.md)
+fe333e598595000ae021bd27117db32ec69af6987f507ba7a63c90638ff633ce  # example value inside the vendored official MCP server.json schema
+fc1c149afbf4c899  # sdk README example pHash (a slice of the sha256 of the empty string)

@@ -1,0 +1,12 @@
+# gitleaks config for the public surface (the mirror export, the mirror itself
+# and the packed npm tarballs). Uses gitleaks' default rules; only known,
+# synthetic test placeholders are allowed. Any real hit fails the guard.
+# Owner: the repository owner. Policy: docs/PUBLIC_SURFACE.md.
+title = "phototology public surface"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Readable test placeholders: pt_live_/pt_test_ followed by a short word, never 64 hex chars like a real key"
+regexes = ['''\bpt_(?:live|test)_[a-z0-9_]{1,23}\b''']
