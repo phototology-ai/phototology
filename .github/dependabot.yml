@@ -1,0 +1,13 @@
+# Dependency updates for the public packages. Updates are applied upstream
+# (the lockfile is generated there); a Dependabot PR here is the signal.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

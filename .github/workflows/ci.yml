@@ -1,0 +1,76 @@
+name: ci
+
+# The always-on CI for the public Phototology packages. Runs on every push and
+# pull request to main: public-surface guard + gitleaks, frozen install from the
+# committed lockfile, typecheck, tests, build, and npm pack-content checks.
+# Make the `ci` check required on main (repo ruleset).
+#
+# Source of truth lives upstream; edit it there and re-run the deploy script.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GITLEAKS_VERSION: "8.30.1"
+  GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: Install gitleaks (pinned, checksum-verified)
+        run: |
+          set -euo pipefail
+          f="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSL -o "${RUNNER_TEMP}/${f}" "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${f}"
+          echo "${GITLEAKS_SHA256}  ${RUNNER_TEMP}/${f}" | sha256sum -c -
+          tar -xzf "${RUNNER_TEMP}/${f}" -C "${RUNNER_TEMP}" gitleaks
+          echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
+
+      - name: Public-surface guard (before anything is installed)
+        run: node scripts/public-surface/check.mjs .
+
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Test
+        run: pnpm run test
+
+      - name: npm pack contents match pack-manifest.json
+        run: pnpm run check:pack
+
+      - name: Guard the packed tarballs
+        run: |
+          set -euo pipefail
+          out="${RUNNER_TEMP}/tgz"
+          mkdir -p "${out}"
+          for p in sdk mcp phototology; do (cd "packages/${p}" && pnpm pack --pack-destination "${out}" >/dev/null); done
+          node scripts/public-surface/check.mjs --tarball "${out}"/*.tgz
