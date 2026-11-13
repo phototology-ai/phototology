@@ -14,5 +14,10 @@
     "check:surface": "node scripts/public-surface/check.mjs .",
     "check:versions": "node scripts/public-surface/check-versions.mjs",
     "check:pack": "node scripts/public-surface/check-pack.mjs packages/sdk packages/mcp packages/phototology"
+  },
+  "pnpm": {
+    "overrides": {
+      "@hono/node-server": ">=2.1.6 <3"
+    }
   }
 }
