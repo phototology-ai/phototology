@@ -72,6 +72,6 @@
     "ajv-formats": "^3.0.1",
     "jest": "^30.0.0",
     "ts-jest": "^29.4.9",
-    "typescript": "^5.9.0"
+    "typescript": "^7.0.2"
   }
 }
