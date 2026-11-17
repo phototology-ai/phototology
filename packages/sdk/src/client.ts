@@ -2,6 +2,8 @@ import { fetchWithRetry } from './retry';
 import { PhototologyError, RateLimitedError, ValidationError, describeWait, rateLimitResetSentence } from './errors';
 import type {
   AnalyzeRequest,
+  ErrorRateLimit,
+  ErrorUpgrade,
   AnalyzeResponse,
   EnrichRequest,
   EnrichResponse,
@@ -66,6 +68,8 @@ export class PhototologyClient {
   private rateLimitResetAt: number = 0;
   /** `x-ratelimit-limit` of the exhausted window, for the error message. */
   private rateLimitLimit: string | null = null;
+  /** `error.rateLimit` / `error.upgrade` of the last 429, so a request not sent still says what lifts the limit. */
+  private rateLimitDetails: { rateLimit?: ErrorRateLimit; upgrade?: ErrorUpgrade } | undefined;
 
   constructor(config?: PhototologyClientConfig) {
     const apiKey = config?.apiKey ?? process.env.PHOTOTOLOGY_API_KEY;
@@ -299,8 +303,11 @@ export class PhototologyClient {
     } catch (err) {
       // Remember a 429's reset so the next call fails fast instead of
       // spending another request on the same exhausted window.
-      if (err instanceof RateLimitedError && err.retryAfterSeconds) {
+      // Only a windowed limit: a concurrency 429 clears when an in-flight
+      // request finishes, so it must not hold back the client's other calls.
+      if (err instanceof RateLimitedError && err.retryAfterSeconds && err.code !== 'CONCURRENCY_LIMIT_EXCEEDED') {
         this.rateLimitResetAt = Date.now() + err.retryAfterSeconds * 1000;
+        this.rateLimitDetails = { rateLimit: err.rateLimit, upgrade: err.upgrade };
       }
       throw err;
     }
@@ -335,6 +342,7 @@ export class PhototologyClient {
       `${opening}. ${why}`,
       { code: 'RATE_LIMITED', status: 429, retryable: true, requestId: 'none' },
       seconds,
+      this.rateLimitDetails,
     );
   }
 

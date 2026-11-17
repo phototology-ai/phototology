@@ -1,4 +1,4 @@
-import type { ErrorResponse } from './types';
+import type { ErrorRateLimit, ErrorResponse, ErrorUpgrade } from './types';
 
 /** Regex to match API keys in error messages. */
 const API_KEY_PATTERN = /pt_(live|test)_[a-zA-Z0-9_-]+/g;
@@ -55,11 +55,19 @@ export class PhototologyError extends Error {
       case 'IMAGE_TOO_LARGE':
       case 'CONTENT_FILTERED':
         return new ValidationError(message, opts);
-      case 'RATE_LIMITED': {
-        const retryAfter = headers?.['retry-after']
-          ? parseInt(headers['retry-after'], 10)
-          : undefined;
-        return new RateLimitedError(message, opts, retryAfter);
+      // CONCURRENCY_LIMIT_EXCEEDED (more than 5 /analyze requests in flight)
+      // is a 429 too: same error class, its own code.
+      case 'RATE_LIMITED':
+      case 'CONCURRENCY_LIMIT_EXCEEDED': {
+        const header = headers?.['retry-after'] ? parseInt(headers['retry-after'], 10) : NaN;
+        const fromBody = body.error.retryAfterSeconds;
+        const retryAfter = !isNaN(header)
+          ? header
+          : typeof fromBody === 'number' && fromBody > 0 ? fromBody : undefined;
+        return new RateLimitedError(message, opts, retryAfter, {
+          rateLimit: body.error.rateLimit,
+          upgrade: body.error.upgrade,
+        });
       }
       case 'PARSE_FAILED':
         return new ParseError(message, opts);
@@ -113,12 +121,23 @@ export class RateLimitedError extends PhototologyError {
   readonly retryAfter?: number;
   /** Seconds until the limit resets, when known. */
   readonly retryAfterSeconds?: number;
+  /** Which limit answered (`error.rateLimit` from the API), when the API said. */
+  readonly rateLimit?: ErrorRateLimit;
+  /** What lifts the limit (`error.upgrade` from the API), when something does. */
+  readonly upgrade?: ErrorUpgrade;
 
-  constructor(message: string, options: PhototologyErrorOptions, retryAfter?: number) {
+  constructor(
+    message: string,
+    options: PhototologyErrorOptions,
+    retryAfter?: number,
+    details?: { rateLimit?: ErrorRateLimit; upgrade?: ErrorUpgrade },
+  ) {
     super(message, options);
     this.name = 'RateLimitedError';
     this.retryAfter = retryAfter;
     this.retryAfterSeconds = retryAfter;
+    this.rateLimit = details?.rateLimit;
+    this.upgrade = details?.upgrade;
   }
 }
 

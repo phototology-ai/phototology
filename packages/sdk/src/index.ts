@@ -33,6 +33,8 @@ export type {
   UsageResponse,
   ErrorResponse,
   ErrorCredits,
+  ErrorRateLimit,
+  ErrorUpgrade,
   PlatformErrorCode,
   PhototologyClientConfig,
   LookupRequest,

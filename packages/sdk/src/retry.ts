@@ -127,6 +127,7 @@ export async function fetchWithRetry(
           `${error.message} ${rateLimitResetSentence(waitSeconds, config.maxRateLimitWaitMs)}`,
           { code: error.code, status: error.status, retryable: error.retryable, requestId: error.requestId },
           waitSeconds,
+          error instanceof RateLimitedError ? { rateLimit: error.rateLimit, upgrade: error.upgrade } : undefined,
         );
       }
     }

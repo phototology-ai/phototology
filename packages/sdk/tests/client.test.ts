@@ -373,6 +373,50 @@ describe('PhototologyClient', () => {
       expect(mockFetch).toHaveBeenCalledTimes(2);
     }, 10_000);
 
+    it('a 429 thrown at the wait cap keeps the API\'s rateLimit and upgrade, and so does the next call the client does not send', async () => {
+      mockFetch.mockResolvedValue(mockJsonResponse(429, {
+        error: {
+          code: 'RATE_LIMITED', message: 'Rate limit exceeded. 600 requests per minute allowed.', retryable: true, requestId: 'req_rl',
+          retryAfterSeconds: 40,
+          rateLimit: { scope: 'account_per_minute', limit: 600, windowSeconds: 60, resetAt: '2026-11-16T15:00:40.000Z' },
+          upgrade: { hint: 'Every account key has this same limit.', url: 'https://phototology.com/pricing' },
+        },
+      }, { 'retry-after': '40' }));
+
+      const client = new PhototologyClient({ apiKey: TEST_KEY, baseUrl: 'https://api.test' });
+      const first = await client.modules().then(() => null, (e: unknown) => e) as RateLimitedError;
+      expect(first).toBeInstanceOf(RateLimitedError);
+      expect(first.retryAfterSeconds).toBe(40);
+      expect(first.upgrade?.url).toBe('https://phototology.com/pricing');
+      expect(first.rateLimit?.scope).toBe('account_per_minute');
+
+      const second = await client.modules().then(() => null, (e: unknown) => e) as RateLimitedError;
+      expect(second).toBeInstanceOf(RateLimitedError);
+      expect(second.upgrade?.url).toBe('https://phototology.com/pricing');
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('a concurrency 429 does not hold back the client\'s next call', async () => {
+      mockFetch.mockResolvedValueOnce(mockJsonResponse(429, {
+        error: {
+          code: 'CONCURRENCY_LIMIT_EXCEEDED', message: 'Too many concurrent /analyze requests.', retryable: true, requestId: 'req_c',
+          retryAfterSeconds: 5,
+          rateLimit: { scope: 'analyze_concurrency', limit: 5, windowSeconds: null, resetAt: null },
+        },
+      }, { 'retry-after': '5' }));
+      mockFetch.mockResolvedValueOnce(mockJsonResponse(200, { modules: [], presets: [] }));
+
+      const client = new PhototologyClient({ apiKey: TEST_KEY, baseUrl: 'https://api.test', maxRetries: 0 });
+      const err = await client.modules().then(() => null, (e: unknown) => e) as RateLimitedError;
+      expect(err).toBeInstanceOf(RateLimitedError);
+      expect(err.code).toBe('CONCURRENCY_LIMIT_EXCEEDED');
+
+      const startMs = Date.now();
+      await client.modules();
+      expect(Date.now() - startMs).toBeLessThan(1000);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+
     it('honours a custom maxRateLimitWaitMs', async () => {
       mockFetch.mockResolvedValue(mockJsonResponse(429, {
         error: { code: 'RATE_LIMITED', message: 'slow down', retryable: true, requestId: 'req_rl' },

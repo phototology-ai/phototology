@@ -55,6 +55,52 @@ describe('PhototologyError', () => {
       expect((err as RateLimitedError).retryAfter).toBe(30);
     });
 
+    it('carries the 429 body fields: rateLimit and upgrade', () => {
+      const err = PhototologyError.fromResponse(
+        429,
+        {
+          error: {
+            code: 'RATE_LIMITED', message: 'Rate limit exceeded.', retryable: true, requestId: 'req_3b',
+            retryAfterSeconds: 12,
+            rateLimit: { scope: 'account_per_minute', limit: 600, windowSeconds: 60, resetAt: '2026-11-16T15:00:12.000Z' },
+            upgrade: { hint: 'Contact us for a higher limit.', url: 'https://phototology.com/pricing' },
+          },
+        },
+        { 'retry-after': '12' },
+      ) as RateLimitedError;
+      expect(err).toBeInstanceOf(RateLimitedError);
+      expect(err.retryAfterSeconds).toBe(12);
+      expect(err.rateLimit?.scope).toBe('account_per_minute');
+      expect(err.upgrade?.url).toBe('https://phototology.com/pricing');
+    });
+
+    it('uses error.retryAfterSeconds when the Retry-After header is missing', () => {
+      const err = PhototologyError.fromResponse(
+        429,
+        { error: { code: 'RATE_LIMITED', message: 'x', retryable: true, requestId: 'req_3c', retryAfterSeconds: 7 } },
+        {},
+      ) as RateLimitedError;
+      expect(err.retryAfterSeconds).toBe(7);
+    });
+
+    it('creates RateLimitedError for CONCURRENCY_LIMIT_EXCEEDED, keeping its code', () => {
+      const err = PhototologyError.fromResponse(
+        429,
+        {
+          error: {
+            code: 'CONCURRENCY_LIMIT_EXCEEDED', message: 'Too many concurrent /analyze requests.', retryable: true, requestId: 'req_3d',
+            retryAfterSeconds: 5,
+            rateLimit: { scope: 'analyze_concurrency', limit: 5, windowSeconds: null, resetAt: null },
+          },
+        },
+        { 'retry-after': '5' },
+      ) as RateLimitedError;
+      expect(err).toBeInstanceOf(RateLimitedError);
+      expect(err.code).toBe('CONCURRENCY_LIMIT_EXCEEDED');
+      expect(err.retryAfterSeconds).toBe(5);
+      expect(err.rateLimit?.limit).toBe(5);
+    });
+
     it('creates ParseError for PARSE_FAILED (retryable)', () => {
       const err = PhototologyError.fromResponse(500, {
         error: { code: 'PARSE_FAILED', message: 'Bad JSON from AI', retryable: true, requestId: 'req_4' },

@@ -92,6 +92,32 @@ describe('tool errors round-trip through the real client', () => {
     }
   });
 
+  it('an account-limit 429 on analyze_photo reaches the agent as wait-N-seconds plus the API\'s upgrade link', async () => {
+    fetchMock.mockImplementation(async () => apiError(429, 'RATE_LIMITED', 'Rate limit exceeded. 600 requests per minute allowed.', { 'retry-after': '45' }, {
+      retryAfterSeconds: 45,
+      rateLimit: { scope: 'account_per_minute', limit: 600, windowSeconds: 60, resetAt: '2026-11-16T15:00:45.000Z' },
+      upgrade: { hint: 'Every account key has this same limit, and buying credits does not raise it. For a higher limit, contact us from the pricing page.', url: 'https://phototology.com/pricing' },
+    }));
+    const { client, close } = await connect('pt_live_roundtrip');
+    try {
+      const result: any = await client.callTool({
+        name: 'analyze_photo',
+        arguments: { imageUrl: 'https://example.com/a.jpg', lenses: ['dating'] },
+      });
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toBeUndefined();
+      expect(head(result)).toEqual(expect.objectContaining({
+        code: 'RATE_LIMITED', retryable: true, retryAfterSeconds: 45,
+        limitScope: 'account_per_minute', actionUrl: 'https://phototology.com/pricing',
+      }));
+      const text = String(result.content[0].text);
+      expect(text).toContain('Retry after 45 seconds');
+      expect(text).toContain('buying credits does not raise it');
+    } finally {
+      await close();
+    }
+  });
+
   it('SANDBOX_KEY on get_credits round-trips with its sentence', async () => {
     fetchMock.mockImplementation(async () => apiError(401, 'AUTH_FAILED', 'Invalid or revoked API key'));
     const { client, close } = await connect('pt_test_roundtrip');

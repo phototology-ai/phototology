@@ -10,7 +10,7 @@ import { registerResources } from './resources';
 import { phoneHome } from './phone-home';
 import { SIGNUP_URL, setAnonymousSandbox, setSandboxProbe, setStartupProblem } from './lib/key-status';
 import { SELECTABLE_LENS_IDS } from './lib/lens-ids';
-import { SANDBOX_KEY_SENTENCE, SANDBOX_RATE_LIMIT_SENTENCE } from './tools/errors';
+import { CONCURRENCY_SENTENCE, SANDBOX_KEY_SENTENCE, SANDBOX_RATE_LIMIT_SENTENCE } from './tools/errors';
 
 /**
  * Server-level instructions returned in the MCP Initialize handshake.
@@ -90,7 +90,7 @@ export function buildServerInstructions(): string {
     'A `pt_test_` key runs the free sandbox: analyze returns deterministic golden-fixture data with `livemode: false`, `usage.creditsCharged: 0`, and `meta.provider: "test-sandbox"`, the same payload regardless of the image. Use it to wire up an integration, never as facts about a real photo. A `pt_live_` key returns real model output with `livemode: true`. Branch on `livemode`, not on `meta.provider`.',
     'Every tool error from the API starts with one line of JSON: `code`, `retryable`, and fields such as `retryAfterSeconds` or `actionUrl`. Read it before the sentence that follows; when `retryable` is false, do not retry.',
     `${SANDBOX_KEY_SENTENCE}: lookup_photo, get_credits and enrich_photo answer a sandbox key with a tool error whose code is SANDBOX_KEY, which is not retryable.`,
-    `A rate limit comes back as a tool error whose code is RATE_LIMITED, with \`retryAfterSeconds\`; wait that long or stop, never retry at once. A wait over 10 minutes is marked not retryable. ${SANDBOX_RATE_LIMIT_SENTENCE}`,
+    `A rate limit comes back as a tool error whose code is RATE_LIMITED (or CONCURRENCY_LIMIT_EXCEEDED for too many analyze calls at once), with \`retryAfterSeconds\`; wait that long or stop, never retry at once. A wait over 10 minutes is marked not retryable. Retry first: wait \`retryAfterSeconds\` and call again (for CONCURRENCY_LIMIT_EXCEEDED, send fewer calls at once or use analyze_batch). \`actionUrl\` is how to get a higher limit; show it to the user only when the error is not retryable or the limit keeps blocking the work after you have waited and retried, not on a short wait. ${CONCURRENCY_SENTENCE} ${SANDBOX_RATE_LIMIT_SENTENCE}`,
   ].join('\n');
 }
 

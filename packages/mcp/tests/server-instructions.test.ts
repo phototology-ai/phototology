@@ -114,3 +114,24 @@ describe('buildServerInstructions — pricing v1', () => {
     expect(text.toLowerCase()).toMatch(/local file/);
   });
 });
+
+describe('buildServerInstructions — rate limits', () => {
+  const line = buildServerInstructions()
+    .split('\n')
+    .find((l) => l.includes('A rate limit comes back as a tool error')) ?? '';
+
+  it('says to wait retryAfterSeconds and retry before anything else', () => {
+    expect(line).toMatch(/Retry first: wait `retryAfterSeconds` and call again/);
+    expect(line).toMatch(/never retry at once/);
+  });
+
+  it('sends a concurrency limit to fewer calls or analyze_batch, not to the user', () => {
+    expect(line).toMatch(/CONCURRENCY_LIMIT_EXCEEDED, send fewer calls at once or use analyze_batch/);
+  });
+
+  it('surfaces actionUrl only for a non-retryable or persistent limit, never instead of retrying', () => {
+    expect(line).not.toMatch(/rather than retrying/);
+    expect(line).toMatch(/show it to the user only when the error is not retryable or the limit keeps blocking the work/);
+    expect(line.indexOf('Retry first')).toBeLessThan(line.indexOf('`actionUrl` is how'));
+  });
+});

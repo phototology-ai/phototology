@@ -8,6 +8,7 @@ export type PlatformErrorCode =
   | 'IMAGE_INVALID'
   | 'IMAGE_TOO_LARGE'
   | 'RATE_LIMITED'
+  | 'CONCURRENCY_LIMIT_EXCEEDED'
   | 'CONTENT_FILTERED'
   | 'PARSE_FAILED'
   | 'PROVIDER_UNAVAILABLE'
@@ -431,7 +432,33 @@ export interface ErrorResponse {
     requestId: string;
     /** Populated on 402 PLAN_LIMIT_EXCEEDED with dual-pool credit info. */
     credits?: ErrorCredits;
+    /** On a 429: seconds to wait, the same number as the `Retry-After` header. */
+    retryAfterSeconds?: number;
+    /** On a 429: which limit answered. */
+    rateLimit?: ErrorRateLimit;
+    /** On a 429: what lifts the limit, when something does. */
+    upgrade?: ErrorUpgrade;
   };
+}
+
+/** Which limit a 429 came from (`error.rateLimit`). */
+export interface ErrorRateLimit {
+  /** e.g. `account_per_minute`, `sandbox_per_minute`, `sandbox_per_day`, `analyze_concurrency`, `lookup_per_minute`, `mcp_event_per_minute`, `public_ip_per_minute`, `provider`. Treat unknown values as opaque. */
+  scope: string;
+  /** Requests per window, or in-flight requests for `analyze_concurrency`; null when unknown. */
+  limit: number | null;
+  /** Window length in seconds; null when the limit has no window. */
+  windowSeconds: number | null;
+  /** ISO time the window resets; null when there is no window. */
+  resetAt: string | null;
+}
+
+/** What lifts a limit (`error.upgrade` on a 429). */
+export interface ErrorUpgrade {
+  /** One or two sentences a person can read. */
+  hint: string;
+  /** Where to act: the signup page for a sandbox key, the pricing page for account limits. */
+  url: string;
 }
 
 /** Spreadsheet column descriptor exposed per lens via /v1/modules. Drives default tabular projection. */

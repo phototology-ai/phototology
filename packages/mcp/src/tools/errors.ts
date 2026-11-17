@@ -26,6 +26,10 @@ interface RenderedError {
 export const SANDBOX_RATE_LIMIT_SENTENCE =
   `The sandbox key allows 2 requests a minute and 10 a day per IP; sign up for an account key at ${SIGNUP_URL} to lift this.`;
 
+/** What to do about the /analyze concurrency cap, also in the server instructions. */
+export const CONCURRENCY_SENTENCE =
+  'The API allows 5 analyze calls in flight per account: send at most 5 at once, or use analyze_batch, which queues photos 5 at a time.';
+
 /** The SANDBOX_KEY explanation, also in the server instructions. */
 export const SANDBOX_KEY_SENTENCE =
   'Sandbox keys cannot read the registry or a balance, or write metadata into a photo; analyze_photo and analyze_batch return fixture data; get an account key for lookups and balances';
@@ -88,20 +92,43 @@ function renderError(err: unknown): RenderedError {
 
   // The SDK throws RateLimitedError at once when a window will not reset
   // within its wait cap; pass the wait on so the agent does not retry blind.
+  // The same class carries CONCURRENCY_LIMIT_EXCEEDED (more than 5 analyze
+  // calls in flight) and, from the API's 429 body, what lifts the limit.
   if (err instanceof RateLimitedError) {
     const wait = err.retryAfterSeconds;
     // Past MAX_RETRYABLE_WAIT_SECONDS no retry inside an agent session helps.
     const retryable = wait === undefined || wait <= MAX_RETRYABLE_WAIT_SECONDS;
-    const lines = [`RATE_LIMITED: ${err.message}`];
+    const concurrency = err.code === 'CONCURRENCY_LIMIT_EXCEEDED' || err.rateLimit?.scope === 'analyze_concurrency';
+    const code = concurrency ? 'CONCURRENCY_LIMIT_EXCEEDED' : 'RATE_LIMITED';
+    const lines = [`${code}: ${err.message}`];
     if (wait !== undefined) {
       lines.push(retryable
         ? `Retry after ${wait} seconds; calling again sooner fails the same way.`
         // The SDK's message already says when the limit resets; say it only when it does not.
         : `${/resets in/.test(err.message) ? '' : `The limit resets in ${describeWait(wait)}. `}No retry in this session will help, so stop and tell the user.`);
     }
-    if (getKeyStatus().sandbox) lines.push(SANDBOX_RATE_LIMIT_SENTENCE);
+    if (concurrency) lines.push(CONCURRENCY_SENTENCE);
+    // The API says what lifts the limit (signup for a sandbox key, the pricing
+    // page for account limits). Interpolates only the API's constant hint and
+    // URL, never tool input. Older APIs send none: keep the sandbox sentence.
+    // A retryable wait comes first: the link is for a limit that keeps
+    // blocking the work, not something to push on the user after a 5 s wait.
+    const upgrade = err.upgrade;
+    if (upgrade) {
+      lines.push(retryable
+        ? `Only if the limit keeps blocking the work after waiting and retrying, tell the user how to lift it: ${upgrade.hint} ${upgrade.url}`
+        : `To lift this limit: ${upgrade.hint} ${upgrade.url}`);
+    } else if (getKeyStatus().sandbox) {
+      lines.push(SANDBOX_RATE_LIMIT_SENTENCE);
+    }
     return errorResult(
-      { code: 'RATE_LIMITED', retryable, ...(wait !== undefined ? { retryAfterSeconds: wait } : {}) },
+      {
+        code,
+        retryable,
+        ...(wait !== undefined ? { retryAfterSeconds: wait } : {}),
+        ...(err.rateLimit?.scope ? { limitScope: err.rateLimit.scope } : {}),
+        ...(upgrade ? { actionUrl: upgrade.url } : {}),
+      },
       lines.join(' '),
     );
   }
