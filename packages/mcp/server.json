@@ -21,7 +21,7 @@
       "environmentVariables": [
         {
           "name": "PHOTOTOLOGY_API_KEY",
-          "description": "Your Phototology API key (pt_live_... for production, pt_test_... for the free fixture sandbox). Get one at https://phototology.com/dashboard. New accounts include 1,000 free credits on email verification.",
+          "description": "Your Phototology API key (pt_live_... for production, pt_test_... for the free fixture sandbox). Get one at https://phototology.com/develop/keys. New accounts include 1,000 free credits on email verification.",
           "isRequired": true,
           "isSecret": true
         },
